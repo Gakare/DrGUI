@@ -174,6 +174,7 @@ internal void Win32ProcessKeyboardMessage(button_state *NewState, bool32 IsDown)
 
 internal void Win32LoadXInput(void) {
     HMODULE XInputLibrary = LoadLibrary("xinputuap.dll");
+    // TODO: Maybe add more libraries, but should be good?
     if (!XInputLibrary) {
         XInputLibrary = LoadLibrary("xinput1_4.dll");
     }
@@ -412,12 +413,12 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                     }
                 }
 
-                for (DWORD ControllerIndex = 0;
-                     ControllerIndex < MaxControllerCount;
+                for (int ControllerIndex = 0;
+                     ControllerIndex < ArrayCount(Input->Controllers);
                      ++ControllerIndex) {
-                    DWORD OurControllerIndex = ControllerIndex + 1;
-                    controller_input *Controller = GetController(NewInput, OurControllerIndex);
+                    controller_input *Controller = GetController(NewInput, ControllerIndex);
                     if (Controller->IsAnalog) {
+                        // TODO: Figure out why my XOffset is off
                         XOffset += (int)Controller->StickAverageX;
                         YOffset += (int)Controller->StickAverageY;
                     } else {
@@ -430,15 +431,13 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                     if (Controller->ActionUp.EndedDown) {
                         --YOffset;
                     }
-                    if (Controller->ActionLeft.EndedDown) {
-                        --XOffset;
-                    }
                     if (Controller->ActionRight.EndedDown) {
                         ++XOffset;
                     }
-
+                    if (Controller->ActionLeft.EndedDown) {
+                        --XOffset;
+                    }
                 }
-
 
                 RenderAndUpdate(&GlobalBackBuffer, XOffset, YOffset);
 
