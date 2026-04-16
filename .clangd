@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: [-DDR_INTERNAL=1]
