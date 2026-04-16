@@ -4,14 +4,14 @@
 
 typedef struct button_state {
     int HalfTransitionCount;
-    bool32 EndedDown;
+    b32 EndedDown;
 } button_state;
 
 typedef struct controller_input {
-    bool32 IsConnected;
-    bool32 IsAnalog;
-    real32 StickAverageX;
-    real32 StickAverageY;
+    b32 IsConnected;
+    b32 IsAnalog;
+    r32 StickAverageX;
+    r32 StickAverageY;
 
     union {
         button_state Buttons[12];
@@ -38,6 +38,25 @@ typedef struct input {
     // TODO: Deciding if it should just be 1 controller
     controller_input Controllers[5];
 } input;
+
+#define BITMAP_BYTES_PER_PIXEL 4
+typedef struct offscreen_buffer {
+    // NOTE: Pixels are always 32-bits wide
+    void *Memory;
+    int Width;
+    int Height;
+    int Pitch;
+    int BytesPerPixel;
+} offscreen_buffer;
+
+typedef struct render_memory {
+    b32 IsInitialized;
+    u64 PermanentStorageSize;
+    void *PermanentStorage; // Required to be cleared to zero at startup
+
+    u64 TransientStorageSize;
+    void *TransientStorage; // Requiired to be cleared to zero at startup
+} render_memory;
 
 #define DRGUI_PLATFORM_H
 #endif

@@ -24,5 +24,25 @@ inline controller_input *GetController(input *Input, int ControllerIndex) {
     return (Result);
 }
 
+struct memory_arena {
+    memory_index Size;
+    u8 *Base;
+    memory_index Used;
+
+    u32 TempCount;
+};
+
+struct temporary_memory {
+    memory_arena *Arena;
+    memory_index Used;
+};
+
+struct render_state {
+    int XOffset;
+    int YOffset;
+};
+
+internal void UpdateAndRender(offscreen_buffer *Buffer, render_memory *Memory, input *Input);
+
 #define DRGUI_H
 #endif

@@ -16,5 +16,10 @@ struct win32_window_dimension {
     int Height;
 };
 
+struct win32_state {
+    u64 TotalSize;
+    void *RenderMemoryBlock;
+};
+
 #define WIN32_DRGUI_H
 #endif
