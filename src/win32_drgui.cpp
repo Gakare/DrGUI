@@ -115,6 +115,9 @@ LRESULT CALLBACK Win32MainWindowCallBack(HWND Window, UINT Msg, WPARAM WParam, L
         switch (Msg) {
         case WM_SIZE: {
         } break;
+        case SW_MAXIMIZE: {
+            OutputDebugStringA("SW_MAXIMIZE");
+        } break;
 
         case WM_SETCURSOR: {
         } break;
@@ -358,17 +361,30 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 
                             XINPUT_GAMEPAD *Pad = &ControllerState.Gamepad;
 
-                            NewController->StickAverageX = Win32ProcessXInputStickValue(
+                            NewController->LStickAverageX = Win32ProcessXInputStickValue(
                                 Pad->sThumbLX,
                                 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-                            NewController->StickAverageY = Win32ProcessXInputStickValue(
+                            NewController->LStickAverageY = Win32ProcessXInputStickValue(
                                 Pad->sThumbLY,
                                 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
 
-                            if ((NewController->StickAverageX != 0.0f) ||
-                                (NewController->StickAverageY != 0.0f)) {
+                            NewController->RStickAverageX = Win32ProcessXInputStickValue(
+                                Pad->sThumbRX,
+                                XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
+                            NewController->RStickAverageY = Win32ProcessXInputStickValue(
+                                Pad->sThumbRY,
+                                XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
+
+                            if ((NewController->LStickAverageX != 0.0f) ||
+                                (NewController->LStickAverageY != 0.0f) ||
+                                (NewController->RStickAverageX != 0.0f) ||
+                                (NewController->RStickAverageY != 0.0f)) {
                                 NewController->IsAnalog = true;
                             }
+
+                            // TODO: I might want to use the dpad for something else,
+                            // can't be for movement for the copter
+#if 0
                             if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP) {
                                 NewController->StickAverageY = 1.0f;
                             }
@@ -381,19 +397,20 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                             if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) {
                                 NewController->StickAverageX = 1.0f;
                             }
+#endif
 
                             r32 Threshold = 0.5f;
                             Win32ProcessXInputDigitalButton(
-                                (NewController->StickAverageX < -Threshold) ? 1 : 0,
+                                (NewController->LStickAverageX < -Threshold) ? 1 : 0,
                                 &OldController->MoveLeft, &NewController->MoveLeft, 1);
                             Win32ProcessXInputDigitalButton(
-                                (NewController->StickAverageX > Threshold) ? 1 : 0,
+                                (NewController->LStickAverageX > Threshold) ? 1 : 0,
                                 &OldController->MoveRight, &NewController->MoveRight, 1);
                             Win32ProcessXInputDigitalButton(
-                                (NewController->StickAverageY < -Threshold) ? 1 : 0,
+                                (NewController->LStickAverageY < -Threshold) ? 1 : 0,
                                 &OldController->MoveDown, &NewController->MoveDown, 1);
                             Win32ProcessXInputDigitalButton(
-                                (NewController->StickAverageY > Threshold) ? 1 : 0,
+                                (NewController->LStickAverageY > Threshold) ? 1 : 0,
                                 &OldController->MoveUp, &NewController->MoveUp, 1);
 
                             Win32ProcessXInputDigitalButton(

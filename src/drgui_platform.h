@@ -10,16 +10,24 @@ typedef struct button_state {
 typedef struct controller_input {
     b32 IsConnected;
     b32 IsAnalog;
-    r32 StickAverageX;
-    r32 StickAverageY;
+    r32 LStickAverageX;
+    r32 LStickAverageY;
+
+    r32 RStickAverageX;
+    r32 RStickAverageY;
 
     union {
-        button_state Buttons[12];
+        button_state Buttons[16];
         struct {
             button_state MoveUp;
             button_state MoveDown;
             button_state MoveLeft;
             button_state MoveRight;
+
+            button_state LookUp;
+            button_state LookDown;
+            button_state LookLeft;
+            button_state LookRight;
 
             button_state ActionUp;
             button_state ActionDown;

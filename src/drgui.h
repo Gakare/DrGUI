@@ -38,8 +38,8 @@ struct temporary_memory {
 };
 
 struct render_state {
-    int XOffset;
-    int YOffset;
+    int XOffset[2];
+    int YOffset[2];
 };
 
 internal void UpdateAndRender(offscreen_buffer *Buffer, render_memory *Memory, input *Input);
