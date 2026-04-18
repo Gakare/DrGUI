@@ -129,13 +129,38 @@ internal void UpdateAndRender(offscreen_buffer *Buffer, render_memory *Memory, i
     DrawRectangle(Buffer, RightBoundMinX, RightBoundMinY, RightBoundMaxX,
                   RightBoundMaxY, 0xFFFF0000);
 
-    DrawRectangle(Buffer, RightBoundMinX + StickOffset, RightBoundMinY + StickOffset,
-                  RightBoundMaxX - StickOffset, RightBoundMaxY - StickOffset, 0xFF000000);
+    r32 RBlackMinX = RightBoundMinX + StickOffset;
+    r32 RBlackMinY = RightBoundMinY + StickOffset;
+    r32 RBlackMaxX =  RightBoundMaxX - StickOffset;
+    r32 RBlackMaxY = RightBoundMaxY - StickOffset;
+    DrawRectangle(Buffer, RBlackMinX, RBlackMinY, RBlackMaxX, RBlackMaxY, 0xFF000000);
 
     r32 RControllerMinX = RightBoundMinX + ControllerOffset + State->XOffset[1];
     r32 RControllerMinY = RightBoundMinY + ControllerOffset + State->YOffset[1];
     r32 RControllerMaxX = RightBoundMaxX - ControllerOffset + State->XOffset[1];
     r32 RControllerMaxY = RightBoundMaxY - ControllerOffset + State->YOffset[1];
+
+    if (RControllerMinX > RBlackMaxX) {
+        r32 XDiff = RControllerMaxX - RControllerMinX;
+        RControllerMinX = RBlackMaxX;
+        RControllerMaxX = RControllerMinX + XDiff;
+    }
+    if (RControllerMinY > RBlackMaxY) {
+        r32 YDiff = RControllerMaxY - RControllerMinY;
+        RControllerMinY = RBlackMaxY;
+        RControllerMaxY = RControllerMinY + YDiff;
+    }
+    if (RControllerMaxX < RBlackMinX) {
+        r32 XDiff = RControllerMaxX - RControllerMinX;
+        RControllerMaxX = RBlackMinX;
+        RControllerMinX = RControllerMaxX - XDiff;
+    }
+    if (RControllerMaxY < RBlackMinY) {
+        r32 YDiff = RControllerMaxY - RControllerMinY;
+        RControllerMaxY = RBlackMinY;
+        RControllerMinY = RControllerMaxY - YDiff;
+    }
+
     DrawRectangle(Buffer, RControllerMinX, RControllerMinY, RControllerMaxX,
                   RControllerMaxY, 0xFF999999); 
 

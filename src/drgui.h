@@ -1,4 +1,17 @@
 #if !defined(DRGUI_H)
+/* TODO:
+ *  Bluetooth: (IMPORTANT)
+ *  - Add Bluetooth to be able to control the drone with the Xbox controller
+ *
+ *  Controller:
+ *  - See if I can fix the controller sensitivity 
+ *
+ *  GUI:
+ *  - Display the inputs in a more controlled manner, ideally as close to what the joysticks are 
+ *  doing in real life as possible.
+ *  - Add graph data reading from the bluetooth.
+ *
+*/
 #include "types.h"
 #include "drgui_platform.h"
 
