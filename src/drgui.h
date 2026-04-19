@@ -1,7 +1,11 @@
 #if !defined(DRGUI_H)
 /* TODO:
- *  Bluetooth: (IMPORTANT)
- *  - Add Bluetooth to be able to control the drone with the Xbox controller
+ *  COM Port
+ *  - Connect to the COM PORT (Currently Com 4). Will need to adjust if connecting with another device
+ *  - Be able to Write data
+ *  - Be able to Read data
+ *  - VCC: Use a constant 3.6V-6V for a stable power supply, mandatory.
+ *  - TX (PC) - RX (HC): Use a 1K Resistor and 2K Resistor to create a voltage divider, mandatory.
  *
  *  Controller:
  *  - See if I can fix the controller sensitivity 

@@ -1,11 +1,19 @@
 #include "drgui.cpp"
 #include "drgui.h"
 #include "drgui_platform.h"
-#include "win32_drgui.h"
+
 
 /* Included libraries */
+#include <WinSock2.h>
+#include <ws2bth.h>
+#include <bthsdpdef.h>
+#include <bluetoothapis.h>
+
+#include "win32_drgui.h"
+
 #include <windows.h>
 #include <Xinput.h>
+#include <stdio.h>
 
 /* Copied from Casey Muratori */
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
@@ -116,7 +124,6 @@ LRESULT CALLBACK Win32MainWindowCallBack(HWND Window, UINT Msg, WPARAM WParam, L
         case WM_SIZE: {
         } break;
         case SW_MAXIMIZE: {
-            OutputDebugStringA("SW_MAXIMIZE");
         } break;
 
         case WM_SETCURSOR: {
@@ -293,7 +300,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 ToggleFullScreen(Window);
             }
 #endif
-
             // HDC RefreshDC = GetDC(Window);
 
             GlobalRunning = true;
@@ -302,7 +308,36 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             LPVOID BaseAddress = (LPVOID)Terabytes((u64)2);
 #else
             LPVOID BaseAddress = 0;
-            #endif
+#endif
+
+            // TODO: This is how I will connect to the HC-05
+            HANDLE ComHandle = CreateFileW((const wchar_t *)"\\\\.\\COM4",
+                                           GENERIC_READ | GENERIC_WRITE, 0,
+                                           NULL, OPEN_EXISTING, 0, NULL);
+            if (ComHandle == INVALID_HANDLE_VALUE) {
+#if DR_INTERNAL
+                OutputDebugStringA("Failed to open COM");
+#endif
+            }
+
+            DCB Win32DCB = {};
+            Win32DCB.DCBlength = sizeof(Win32DCB);
+            GetCommState(ComHandle, &Win32DCB);
+            Win32DCB.BaudRate = 9600;
+            Win32DCB.ByteSize = 8;
+            Win32DCB.Parity = NOPARITY;
+            Win32DCB.StopBits = ONESTOPBIT;
+            SetCommState(ComHandle, &Win32DCB);
+
+            char buffer[256];
+            DWORD bytesWritten, bytesRead;
+
+             // Write data
+            //WriteFile(ComHandle, "Hello", 6, &bytesWritten, NULL);
+
+            // Read data
+            // ReadFile(ComHandle, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
+            // buffer[bytesRead] = '\0';
 
             render_memory RenderMemory = {};
             RenderMemory.PermanentStorageSize = Megabytes(64);
@@ -459,9 +494,12 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                                                Dimension.Width, Dimension.Height);
                     ReleaseDC(Window, DeviceContext);
                 }
+
             } else {
                 // TODO: Logging
             }
+
+            CloseHandle(ComHandle);
         } else {
             // TODO: Logging
         }
