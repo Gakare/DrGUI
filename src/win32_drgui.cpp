@@ -311,7 +311,8 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 #endif
 
             // TODO: This is how I will connect to the HC-05
-            HANDLE ComHandle = CreateFileW((const wchar_t *)"\\\\.\\COM4",
+            LPCWSTR PortName = L"\\\\.\\COM4";
+            HANDLE ComHandle = CreateFileW(PortName,
                                            GENERIC_READ | GENERIC_WRITE, 0,
                                            NULL, OPEN_EXISTING, 0, NULL);
             if (ComHandle == INVALID_HANDLE_VALUE) {
@@ -319,6 +320,9 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 OutputDebugStringA("Failed to open COM");
 #endif
             }
+
+            // TODO: Omit this, ONLY FOR DEBUGGING
+            CloseHandle(ComHandle);
 
             DCB Win32DCB = {};
             Win32DCB.DCBlength = sizeof(Win32DCB);
@@ -329,8 +333,8 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             Win32DCB.StopBits = ONESTOPBIT;
             SetCommState(ComHandle, &Win32DCB);
 
-            char buffer[256];
-            DWORD bytesWritten, bytesRead;
+            // char buffer[256];
+            // DWORD bytesWritten, bytesRead;
 
              // Write data
             //WriteFile(ComHandle, "Hello", 6, &bytesWritten, NULL);
@@ -499,6 +503,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 // TODO: Logging
             }
 
+            // NOTE: This is where it will be closed
             CloseHandle(ComHandle);
         } else {
             // TODO: Logging
