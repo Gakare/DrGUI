@@ -321,9 +321,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 #endif
             }
 
-            // TODO: Omit this, ONLY FOR DEBUGGING
-            CloseHandle(ComHandle);
-
             DCB Win32DCB = {};
             Win32DCB.DCBlength = sizeof(Win32DCB);
             GetCommState(ComHandle, &Win32DCB);
@@ -333,15 +330,26 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             Win32DCB.StopBits = ONESTOPBIT;
             SetCommState(ComHandle, &Win32DCB);
 
-            // char buffer[256];
-            // DWORD bytesWritten, bytesRead;
+            char buffer[256];
+            //DWORD bytesWritten;
+            DWORD bytesRead;
 
              // Write data
             //WriteFile(ComHandle, "Hello", 6, &bytesWritten, NULL);
 
+            COMMTIMEOUTS Win32Timeout = {};
+            Win32Timeout.ReadIntervalTimeout = 10;
+            Win32Timeout.ReadTotalTimeoutMultiplier = 10;
+            Win32Timeout.ReadTotalTimeoutConstant = 1000;
+            SetCommTimeouts(ComHandle, &Win32Timeout);
             // Read data
-            // ReadFile(ComHandle, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
-            // buffer[bytesRead] = '\0';
+            if (ReadFile(ComHandle, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
+                buffer[bytesRead] = '\0';
+                OutputDebugStringA(buffer);
+            }
+
+            // TODO: Omit this, ONLY FOR DEBUGGING
+            CloseHandle(ComHandle);
 
             render_memory RenderMemory = {};
             RenderMemory.PermanentStorageSize = Megabytes(64);

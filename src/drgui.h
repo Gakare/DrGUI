@@ -8,7 +8,7 @@
  *  - TX (PC) - RX (HC): Use a 1K Resistor and 2K Resistor to create a voltage divider, mandatory.
  *
  *  Controller:
- *  - See if I can fix the controller sensitivity 
+ *  - See if I can fix the controller sensitivity that will be used to control drone and send via UART.
  *
  *  GUI:
  *  - Display the inputs in a more controlled manner, ideally as close to what the joysticks are 

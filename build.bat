@@ -17,7 +17,7 @@ set cl_dis_warn=    /wd4201 /wd4100 /wd4189 /wd4505
 set cl_common=      /nologo /EHa /Oi /WX /W4 %cl_dis_warn% /FC /Z7
 set cl_debug=       call cl /Od /Ob1 /DDR_INTERNAL=1 /Zo  %cl_common%
 set cl_release=     call cl /O2 /DDR_INTERNAL=0 %cl_common%
-set cl_link=        /link -incremental:no -opt:ref user32.lib gdi32.lib winmm.lib 
+set cl_link=        /link -incremental:no -opt:ref user32.lib gdi32.lib
 set cl_out=         /out:
 set cl_linker=
 
