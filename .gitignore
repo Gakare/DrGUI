@@ -1,3 +1,11 @@
-local/misc/debuginfo
+local
 build
 test/
+DrGUI
+x64
+.vscode
+*.sln
+*.vcxproj*
+*.obj
+*.pdb
+.vs
