@@ -311,7 +311,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 #endif
 
             // TODO: This is how I will connect to the HC-05
-            LPCWSTR PortName = L"\\\\.\\COM4";
+            LPCWSTR PortName = L"\\\\.\\COM6";
             HANDLE ComHandle = CreateFileW(PortName,
                                            GENERIC_READ | GENERIC_WRITE, 0,
                                            NULL, OPEN_EXISTING, 0, NULL);
@@ -330,7 +330,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             Win32DCB.StopBits = ONESTOPBIT;
             SetCommState(ComHandle, &Win32DCB);
 
-            char buffer[256];
+            char buffer[4];
             //DWORD bytesWritten;
             DWORD bytesRead;
 
@@ -338,9 +338,15 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             //WriteFile(ComHandle, "Hello", 6, &bytesWritten, NULL);
 
             COMMTIMEOUTS Win32Timeout = {};
+            # if 0
             Win32Timeout.ReadIntervalTimeout = 10;
             Win32Timeout.ReadTotalTimeoutMultiplier = 10;
             Win32Timeout.ReadTotalTimeoutConstant = 1000;
+            #else
+            Win32Timeout.ReadIntervalTimeout = 0;
+            Win32Timeout.ReadTotalTimeoutMultiplier = 0;
+            Win32Timeout.ReadTotalTimeoutConstant = 0;
+            #endif
             SetCommTimeouts(ComHandle, &Win32Timeout);
             // Read data
             if (ReadFile(ComHandle, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
