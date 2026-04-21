@@ -6,7 +6,6 @@
  *  - Be able to Read data
  *  - VCC: Use a constant 3.6V-6V for a stable power supply, mandatory.
  *  - TX (PC) - RX (HC): Use a 1K Resistor and 2K Resistor to create a voltage divider, mandatory.
- *  - Handle the line feed, windows accepts \r, I believe Linux uses \n.
  *
  *  Controller:
  *  - See if I can fix the controller sensitivity that will be used to control drone and send via UART.
