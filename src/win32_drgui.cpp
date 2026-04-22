@@ -272,6 +272,14 @@ internal void Win32ProcessXInputDigitalButton(DWORD XInputButtonState,
     NewState->HalfTransitionCount = (OldState->EndedDown != NewState->EndedDown) ? 1 : 0;
 }
 
+internal HANDLE Win32ConnectComDevice(LPCWSTR PortName) {
+    HANDLE Result;
+    Result = CreateFileW(PortName, 
+                         GENERIC_READ | GENERIC_WRITE, 0,
+                         NULL, OPEN_EXISTING, 0, NULL);
+    return (Result);
+}
+
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                      int ShowCmd) {
     win32_state Win32State = {};
@@ -310,209 +318,250 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             LPVOID BaseAddress = 0;
 #endif
 
-            // TODO: This is how I will connect to the HC-05
+
+            // struct win32_com_dev {
+            //
+            // };
+#if DR_INTERNAL
             LPCWSTR PortName = L"\\\\.\\COM4";
-            HANDLE ComHandle = CreateFileW(PortName,
-                                           GENERIC_READ | GENERIC_WRITE, 0,
-                                           NULL, OPEN_EXISTING, 0, NULL);
-            if (ComHandle == INVALID_HANDLE_VALUE) {
+            void* Win32ComHandle = Win32ConnectComDevice(PortName);
+#else
+            LPCWSTR PortName = L"\\\\.\\COM6";
+            HANDLE Win32ComHandle = Win32ConnectComDevice(PortName);
+#endif
+            if (Win32ComHandle != INVALID_HANDLE_VALUE) {
+                DCB Win32DCB = {};
+                Win32DCB.DCBlength = sizeof(Win32DCB);
+                GetCommState(Win32ComHandle, &Win32DCB);
+                Win32DCB.BaudRate = 9600;
+                Win32DCB.ByteSize = 8;
+                Win32DCB.Parity = NOPARITY;
+                Win32DCB.StopBits = ONESTOPBIT;
+                SetCommState(Win32ComHandle, &Win32DCB);
+
+                // TODO: Figure out how to set the Read/Write timeouts with our desired bytes
+                /* NOTE: RTmax = (N (amount in bytes) * ReadTotalTimeoutM) + ReadTotalTimoutConst
+                 *       WTmax = (N (amount in bytes) * WriteTotalTimoutM) + WriteTotalTimoutConst
+                 */
+                COMMTIMEOUTS Win32Timeout = {};
+                Win32Timeout.ReadTotalTimeoutMultiplier = 0;
+                Win32Timeout.ReadTotalTimeoutConstant = 0;
+                Win32Timeout.ReadIntervalTimeout = 0;
+                Win32Timeout.WriteTotalTimeoutMultiplier = 0;
+                Win32Timeout.WriteTotalTimeoutConstant = 0;
+                SetCommTimeouts(Win32ComHandle, &Win32Timeout);
+
+                // TODO: I can already see a bug where the server and client will be in a stalemate
+                // because they both are reading
+                // TODO: Need to add threading for both reading and writing
+                // TODO: Figure out if threading will fix this issue
+                // TODO: Use null when doing any asynchronous operation
+                //DWORD bytesRead;
+                DWORD bytesWritten;
+
+                drone_data Data = {};
+                Data.SensorId = 5;
+                Data.Value = 10;
+                Data.Status = 1;
+
+                uint8_t buffer[7];
+                //drone_data Data2 = {};
+
+                buffer[0] = (Data.SensorId >> 0) & 0xFF;
+                buffer[1] = (Data.SensorId >> 8) & 0xFF;
+                buffer[2] = (Data.SensorId >> 16) & 0xFF;
+                buffer[3] = (Data.SensorId >> 24) & 0xFF;
+
+                buffer[4] = (Data.Value >> 0) & 0xFF;
+                buffer[5] = (Data.Value >> 8) & 0xFF;
+
+                buffer[6] = (Data.Status);
+
+                while (GlobalRunning) {
+                    // NOTE: Because in both cases, they will be sending to a different OS.
+                    // On Windows just send \n, on Linux just send \r\n
+                    // TODO: Got to figure out how to send packets of data
+                    if(!WriteFile(Win32ComHandle, buffer, sizeof(buffer), &bytesWritten, NULL)) {
+                        // NOTE: Failed to send
+                    }
+
+
+                    // if (ReadFile(Win32ComHandle, buffer, sizeof(buffer), &bytesRead, NULL)) {
+                    //     const char *FormatIn = "(%lu, %d, %c)";
+                    //     _snprintf_s(buffer, strlen(FormatIn), FormatIn,
+                    //                 Data2.Start, Data2.a, Data2.b);
+                    //     OutputDebugStringA(buffer);
+                    // }
+                }
+
+
+                render_memory RenderMemory = {};
+                RenderMemory.PermanentStorageSize = Megabytes(64);
+                RenderMemory.TransientStorageSize = Gigabytes(1);
+                Win32State.TotalSize =
+                    RenderMemory.PermanentStorageSize + RenderMemory.TransientStorageSize;
+                Win32State.RenderMemoryBlock =
+                    VirtualAlloc(BaseAddress, (size_t)Win32State.TotalSize,
+                                 MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                RenderMemory.PermanentStorage = Win32State.RenderMemoryBlock;
+                RenderMemory.TransientStorage =
+                    ((u8 *)RenderMemory.PermanentStorage + RenderMemory.PermanentStorageSize);
+
+                if (RenderMemory.PermanentStorage && RenderMemory.TransientStorage) {
+                    input Input[2] = {};
+                    input *NewInput = &Input[0];
+                    input *OldInput = &Input[1];
+
+                    while (GlobalRunning) {
+                        controller_input *OldKeyboardController = GetController(OldInput, 0);
+                        controller_input *NewKeyboardController = GetController(NewInput, 0);
+                        *NewKeyboardController = {};
+                        NewKeyboardController->IsConnected = true;
+                        for (int ButtonIndex = 0;
+                        ButtonIndex < ArrayCount(NewKeyboardController->Buttons);
+                        ++ButtonIndex) {
+                            NewKeyboardController->Buttons[ButtonIndex].EndedDown =
+                                OldKeyboardController->Buttons[ButtonIndex].EndedDown;
+                        }
+
+                        Win32ProcessPendingMessages(NewKeyboardController);
+
+                        // TODO: Deciding if it should only be 1 controller
+                        DWORD MaxControllerCount = XUSER_MAX_COUNT;
+                        if (MaxControllerCount >
+                            (ArrayCount(NewInput->Controllers) - 1)) {
+                            MaxControllerCount = (ArrayCount(NewInput->Controllers) - 1);
+                        }
+
+                        // TODO: Should this be polled more frequently?
+                        for (DWORD ControllerIndex = 0;
+                        ControllerIndex < MaxControllerCount;
+                        ++ControllerIndex) {
+                            DWORD OurControllerIndex = ControllerIndex + 1;
+                            controller_input *OldController =
+                                GetController(OldInput, OurControllerIndex);
+                            controller_input *NewController =
+                                GetController(NewInput, OurControllerIndex);
+
+                            XINPUT_STATE ControllerState;
+                            if (XInputGetState(ControllerIndex, &ControllerState) ==
+                                ERROR_SUCCESS) {
+                                NewController->IsConnected = true;
+                                NewController->IsAnalog = OldController->IsAnalog;
+
+                                XINPUT_GAMEPAD *Pad = &ControllerState.Gamepad;
+
+                                NewController->LStickAverageX = Win32ProcessXInputStickValue(
+                                    Pad->sThumbLX,
+                                    XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+                                NewController->LStickAverageY = Win32ProcessXInputStickValue(
+                                    Pad->sThumbLY,
+                                    XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+
+                                NewController->RStickAverageX = Win32ProcessXInputStickValue(
+                                    Pad->sThumbRX,
+                                    XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
+                                NewController->RStickAverageY = Win32ProcessXInputStickValue(
+                                    Pad->sThumbRY,
+                                    XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
+
+                                if ((NewController->LStickAverageX != 0.0f) ||
+                                    (NewController->LStickAverageY != 0.0f) ||
+                                    (NewController->RStickAverageX != 0.0f) ||
+                                    (NewController->RStickAverageY != 0.0f)) {
+                                    NewController->IsAnalog = true;
+                                }
+
+                                // TODO: I might want to use the dpad for something else,
+                                // can't be for movement for the copter
+#if 0
+                                if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP) {
+                                    NewController->StickAverageY = 1.0f;
+                                }
+                                if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN) {
+                                    NewController->StickAverageY = -1.0f;
+                                }
+                                if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT) {
+                                    NewController->StickAverageX = -1.0f;
+                                }
+                                if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) {
+                                    NewController->StickAverageX = 1.0f;
+                                }
+#endif
+
+                                r32 Threshold = 0.5f;
+                                Win32ProcessXInputDigitalButton(
+                                    (NewController->LStickAverageX < -Threshold) ? 1 : 0,
+                                    &OldController->MoveLeft, &NewController->MoveLeft, 1);
+                                Win32ProcessXInputDigitalButton(
+                                    (NewController->LStickAverageX > Threshold) ? 1 : 0,
+                                    &OldController->MoveRight, &NewController->MoveRight, 1);
+                                Win32ProcessXInputDigitalButton(
+                                    (NewController->LStickAverageY < -Threshold) ? 1 : 0,
+                                    &OldController->MoveDown, &NewController->MoveDown, 1);
+                                Win32ProcessXInputDigitalButton(
+                                    (NewController->LStickAverageY > Threshold) ? 1 : 0,
+                                    &OldController->MoveUp, &NewController->MoveUp, 1);
+
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->ActionDown,
+                                    &NewController->ActionDown, XINPUT_GAMEPAD_A);
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->ActionRight,
+                                    &NewController->ActionRight, XINPUT_GAMEPAD_B);
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->ActionLeft,
+                                    &NewController->ActionLeft, XINPUT_GAMEPAD_X);
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->ActionUp,
+                                    &NewController->ActionUp, XINPUT_GAMEPAD_Y);
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->LeftShoulder,
+                                    &NewController->LeftShoulder,
+                                    XINPUT_GAMEPAD_LEFT_SHOULDER);
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->RightShoulder,
+                                    &NewController->RightShoulder,
+                                    XINPUT_GAMEPAD_RIGHT_SHOULDER);
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->Start,
+                                    &NewController->Start, XINPUT_GAMEPAD_START);
+                                Win32ProcessXInputDigitalButton(
+                                    Pad->wButtons, &OldController->Back,
+                                    &NewController->Back, XINPUT_GAMEPAD_BACK);
+                            } else {
+                                // NOTE: The controller is not available
+                                NewController->IsConnected = false;
+                            }
+                        }
+
+                        offscreen_buffer Buffer = {};
+                        Buffer.Memory = GlobalBackBuffer.Memory;
+                        Buffer.Width = GlobalBackBuffer.Width;
+                        Buffer.Height = GlobalBackBuffer.Height;
+                        Buffer.Pitch = GlobalBackBuffer.Pitch;
+                        Buffer.BytesPerPixel = GlobalBackBuffer.BytesPerPixel;
+
+                        UpdateAndRender(&Buffer, &RenderMemory, NewInput);
+
+                        win32_window_dimension Dimension = Win32GetWindowDimension(Window);
+                        HDC DeviceContext = GetDC(Window);
+                        Win32DisplayBufferInWindow(DeviceContext, &GlobalBackBuffer,
+                                                   Dimension.Width, Dimension.Height);
+                        ReleaseDC(Window, DeviceContext);
+                    }
+
+                } else {
+                    // TODO: Logging
+                }
+
+                CloseHandle(Win32ComHandle);
+            } else {
+                // TODO: Logging
 #if DR_INTERNAL
                 OutputDebugStringA("Failed to open COM");
 #endif
             }
-
-            DCB Win32DCB = {};
-            Win32DCB.DCBlength = sizeof(Win32DCB);
-            GetCommState(ComHandle, &Win32DCB);
-            Win32DCB.BaudRate = 9600;
-            Win32DCB.ByteSize = 8;
-            Win32DCB.Parity = NOPARITY;
-            Win32DCB.StopBits = ONESTOPBIT;
-            SetCommState(ComHandle, &Win32DCB);
-
-            char buffer[256];
-            //DWORD bytesWritten;
-            DWORD bytesRead;
-
-             // Write data
-            //WriteFile(ComHandle, "Hello", 6, &bytesWritten, NULL);
-
-            COMMTIMEOUTS Win32Timeout = {};
-            Win32Timeout.ReadIntervalTimeout = 10;
-            Win32Timeout.ReadTotalTimeoutMultiplier = 10;
-            Win32Timeout.ReadTotalTimeoutConstant = 1000;
-            SetCommTimeouts(ComHandle, &Win32Timeout);
-            // Read data
-            if (ReadFile(ComHandle, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
-                buffer[bytesRead] = '\0';
-                OutputDebugStringA(buffer);
-            }
-
-            // TODO: Omit this, ONLY FOR DEBUGGING
-            CloseHandle(ComHandle);
-
-            render_memory RenderMemory = {};
-            RenderMemory.PermanentStorageSize = Megabytes(64);
-            RenderMemory.TransientStorageSize = Gigabytes(1);
-            Win32State.TotalSize =
-                RenderMemory.PermanentStorageSize + RenderMemory.TransientStorageSize;
-            Win32State.RenderMemoryBlock =
-                VirtualAlloc(BaseAddress, (size_t)Win32State.TotalSize,
-                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-            RenderMemory.PermanentStorage = Win32State.RenderMemoryBlock;
-            RenderMemory.TransientStorage =
-                ((u8 *)RenderMemory.PermanentStorage + RenderMemory.PermanentStorageSize);
-
-            if (RenderMemory.PermanentStorage && RenderMemory.TransientStorage) {
-                input Input[2] = {};
-                input *NewInput = &Input[0];
-                input *OldInput = &Input[1];
-
-                while (GlobalRunning) {
-                    controller_input *OldKeyboardController = GetController(OldInput, 0);
-                    controller_input *NewKeyboardController = GetController(NewInput, 0);
-                    *NewKeyboardController = {};
-                    NewKeyboardController->IsConnected = true;
-                    for (int ButtonIndex = 0;
-                    ButtonIndex < ArrayCount(NewKeyboardController->Buttons);
-                    ++ButtonIndex) {
-                        NewKeyboardController->Buttons[ButtonIndex].EndedDown =
-                            OldKeyboardController->Buttons[ButtonIndex].EndedDown;
-                    }
-
-                    Win32ProcessPendingMessages(NewKeyboardController);
-
-                    // TODO: Deciding if it should only be 1 controller
-                    DWORD MaxControllerCount = XUSER_MAX_COUNT;
-                    if (MaxControllerCount >
-                        (ArrayCount(NewInput->Controllers) - 1)) {
-                        MaxControllerCount = (ArrayCount(NewInput->Controllers) - 1);
-                    }
-
-                    // TODO: Should this be polled more frequently?
-                    for (DWORD ControllerIndex = 0;
-                    ControllerIndex < MaxControllerCount;
-                    ++ControllerIndex) {
-                        DWORD OurControllerIndex = ControllerIndex + 1;
-                        controller_input *OldController =
-                            GetController(OldInput, OurControllerIndex);
-                        controller_input *NewController =
-                            GetController(NewInput, OurControllerIndex);
-
-                        XINPUT_STATE ControllerState;
-                        if (XInputGetState(ControllerIndex, &ControllerState) ==
-                            ERROR_SUCCESS) {
-                            NewController->IsConnected = true;
-                            NewController->IsAnalog = OldController->IsAnalog;
-
-                            XINPUT_GAMEPAD *Pad = &ControllerState.Gamepad;
-
-                            NewController->LStickAverageX = Win32ProcessXInputStickValue(
-                                Pad->sThumbLX,
-                                XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-                            NewController->LStickAverageY = Win32ProcessXInputStickValue(
-                                Pad->sThumbLY,
-                                XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-
-                            NewController->RStickAverageX = Win32ProcessXInputStickValue(
-                                Pad->sThumbRX,
-                                XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
-                            NewController->RStickAverageY = Win32ProcessXInputStickValue(
-                                Pad->sThumbRY,
-                                XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE);
-
-                            if ((NewController->LStickAverageX != 0.0f) ||
-                                (NewController->LStickAverageY != 0.0f) ||
-                                (NewController->RStickAverageX != 0.0f) ||
-                                (NewController->RStickAverageY != 0.0f)) {
-                                NewController->IsAnalog = true;
-                            }
-
-                            // TODO: I might want to use the dpad for something else,
-                            // can't be for movement for the copter
-#if 0
-                            if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP) {
-                                NewController->StickAverageY = 1.0f;
-                            }
-                            if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN) {
-                                NewController->StickAverageY = -1.0f;
-                            }
-                            if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT) {
-                                NewController->StickAverageX = -1.0f;
-                            }
-                            if (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) {
-                                NewController->StickAverageX = 1.0f;
-                            }
-#endif
-
-                            r32 Threshold = 0.5f;
-                            Win32ProcessXInputDigitalButton(
-                                (NewController->LStickAverageX < -Threshold) ? 1 : 0,
-                                &OldController->MoveLeft, &NewController->MoveLeft, 1);
-                            Win32ProcessXInputDigitalButton(
-                                (NewController->LStickAverageX > Threshold) ? 1 : 0,
-                                &OldController->MoveRight, &NewController->MoveRight, 1);
-                            Win32ProcessXInputDigitalButton(
-                                (NewController->LStickAverageY < -Threshold) ? 1 : 0,
-                                &OldController->MoveDown, &NewController->MoveDown, 1);
-                            Win32ProcessXInputDigitalButton(
-                                (NewController->LStickAverageY > Threshold) ? 1 : 0,
-                                &OldController->MoveUp, &NewController->MoveUp, 1);
-
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->ActionDown,
-                                &NewController->ActionDown, XINPUT_GAMEPAD_A);
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->ActionRight,
-                                &NewController->ActionRight, XINPUT_GAMEPAD_B);
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->ActionLeft,
-                                &NewController->ActionLeft, XINPUT_GAMEPAD_X);
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->ActionUp,
-                                &NewController->ActionUp, XINPUT_GAMEPAD_Y);
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->LeftShoulder,
-                                &NewController->LeftShoulder,
-                                XINPUT_GAMEPAD_LEFT_SHOULDER);
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->RightShoulder,
-                                &NewController->RightShoulder,
-                                XINPUT_GAMEPAD_RIGHT_SHOULDER);
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->Start,
-                                &NewController->Start, XINPUT_GAMEPAD_START);
-                            Win32ProcessXInputDigitalButton(
-                                Pad->wButtons, &OldController->Back,
-                                &NewController->Back, XINPUT_GAMEPAD_BACK);
-                        } else {
-                            // NOTE: The controller is not available
-                            NewController->IsConnected = false;
-                        }
-                    }
-
-                    offscreen_buffer Buffer = {};
-                    Buffer.Memory = GlobalBackBuffer.Memory;
-                    Buffer.Width = GlobalBackBuffer.Width;
-                    Buffer.Height = GlobalBackBuffer.Height;
-                    Buffer.Pitch = GlobalBackBuffer.Pitch;
-                    Buffer.BytesPerPixel = GlobalBackBuffer.BytesPerPixel;
-
-                    UpdateAndRender(&Buffer, &RenderMemory, NewInput);
-
-                    win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-                    HDC DeviceContext = GetDC(Window);
-                    Win32DisplayBufferInWindow(DeviceContext, &GlobalBackBuffer,
-                                               Dimension.Width, Dimension.Height);
-                    ReleaseDC(Window, DeviceContext);
-                }
-
-            } else {
-                // TODO: Logging
-            }
-
-            // NOTE: This is where it will be closed
-            CloseHandle(ComHandle);
         } else {
             // TODO: Logging
         }

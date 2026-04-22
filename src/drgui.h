@@ -5,7 +5,7 @@
  *  - Be able to Write data
  *  - Be able to Read data
  *  - VCC: Use a constant 3.6V-6V for a stable power supply, mandatory.
- *  - TX (PC) - RX (HC): Use a 1K Resistor and 2K Resistor to create a voltage divider, mandatory.
+ *  - TX (PD1) - RX (PD0) 
  *
  *  Controller:
  *  - See if I can fix the controller sensitivity that will be used to control drone and send via UART.
@@ -58,6 +58,19 @@ struct render_state {
     int XOffset[2];
     int YOffset[2];
 };
+
+// TODO: Create a serialization and deserialization protocol
+// - Start byte
+// - Roll
+// - Pitch
+// - Yaw
+#pragma pack(push, 1)
+struct drone_data {
+    u32 SensorId;
+    u16 Value;
+    u8 Status;
+};
+#pragma pack(pop)
 
 internal void UpdateAndRender(offscreen_buffer *Buffer, render_memory *Memory, input *Input);
 
