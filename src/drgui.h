@@ -15,6 +15,14 @@
  *  doing in real life as possible.
  *  - Add graph data reading from the bluetooth.
  *
+ *  Multithreading:
+ *  - Need to implement 3 threads
+ *      - Main thread
+ *      - Write thread
+ *      - Read thread
+ *  - I assume the only race condition that I should worry about is when the write thread and read
+ *    thread need to access the com handle at the same time. (Can't wait to be wrong)
+ *
 */
 #include "types.h"
 #include "drgui_platform.h"
@@ -59,16 +67,20 @@ struct render_state {
     int YOffset[2];
 };
 
-// TODO: Create a serialization and deserialization protocol
+#pragma pack(push, 1)
+// NOTE: Create a serialization and deserialization protocol
 // - Start byte
+// - Left stick XInput
+// - Left stick YInput
 // - Roll
 // - Pitch
 // - Yaw
-#pragma pack(push, 1)
+// - End byte
 struct drone_data {
-    u32 SensorId;
-    u16 Value;
-    u8 Status;
+    b32 Start;
+    int LXInput;
+    int LYInput;
+    b32 End;
 };
 #pragma pack(pop)
 

@@ -357,7 +357,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 // TODO: Figure out if threading will fix this issue
                 // TODO: Use null when doing any asynchronous operation
                 //DWORD bytesRead;
-                DWORD bytesWritten;
+                DWORD bytesWritten = 0;
 
                 drone_data Data = {};
                 Data.SensorId = 5;
@@ -365,17 +365,28 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 Data.Status = 1;
 
                 uint8_t buffer[7];
-                //drone_data Data2 = {};
-
                 buffer[0] = (Data.SensorId >> 0) & 0xFF;
                 buffer[1] = (Data.SensorId >> 8) & 0xFF;
                 buffer[2] = (Data.SensorId >> 16) & 0xFF;
                 buffer[3] = (Data.SensorId >> 24) & 0xFF;
-
                 buffer[4] = (Data.Value >> 0) & 0xFF;
                 buffer[5] = (Data.Value >> 8) & 0xFF;
-
                 buffer[6] = (Data.Status);
+
+#if 0
+                drone_data Data2 = {};
+
+                Data2.SensorId = (u32)buffer[0] |
+                                ((u32)buffer[1] << 8) |
+                                ((u32)buffer[2] << 16) |
+                                ((u32)buffer[3] << 24);
+                Data2.Value = (u16)buffer[4] | ((u16)buffer[5] << 8);
+                Data2.Status = (u8)buffer[6];
+
+                CloseHandle(Win32ComHandle);
+#endif
+
+
 
                 while (GlobalRunning) {
                     // NOTE: Because in both cases, they will be sending to a different OS.
@@ -426,12 +437,16 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 
                         Win32ProcessPendingMessages(NewKeyboardController);
 
-                        // TODO: Deciding if it should only be 1 controller
+                        // TODO: Deciding if it should only be 1 controller and 1 keyboard ??
+#if DR_INTERNAL
+                        DWORD MaxControllerCount = 2;
+#else
                         DWORD MaxControllerCount = XUSER_MAX_COUNT;
                         if (MaxControllerCount >
                             (ArrayCount(NewInput->Controllers) - 1)) {
                             MaxControllerCount = (ArrayCount(NewInput->Controllers) - 1);
                         }
+#endif
 
                         // TODO: Should this be polled more frequently?
                         for (DWORD ControllerIndex = 0;
@@ -534,6 +549,9 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                                 NewController->IsConnected = false;
                             }
                         }
+
+                        drone_data Data;
+                        Data.Value = NewInput->Controllers[0].LStickAverageX;
 
                         offscreen_buffer Buffer = {};
                         Buffer.Memory = GlobalBackBuffer.Memory;
