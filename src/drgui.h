@@ -79,5 +79,8 @@ struct drone_data {
 
 internal void UpdateAndRender(offscreen_buffer *Buffer, gui_memory *Memory, input *Input);
 
+global_variable platform_add_entry *PlatformAddEntry;
+global_variable platform_complete_all_work *PlatformCompleteAllWork;
+
 #define DRGUI_H
 #endif

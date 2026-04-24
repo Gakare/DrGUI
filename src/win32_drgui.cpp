@@ -325,36 +325,70 @@ internal drone_data Win32Deserialize(uint8_t *Buffer) {
     return (Result);
 }
 
-struct work_queue_entry {
-    const char *StringToPrint;
+struct platform_work_queue_entry {
+    platform_work_queue_callback *Callback;
+    void *Data;
 };
 
-global_variable u32 volatile EntryCompletionCount;
-global_variable u32 volatile NextEntryToDo;
-global_variable u32 volatile EntryCount;
-work_queue_entry Entries[256];
+struct platform_work_queue {
+    u32 volatile CompletionGoal;
+    u32 volatile CompletionCount;
 
-// TODO: Double-check the write ordering stuff on the CPU
-#define CompletPastWritesBeforFutureWrites _WriteBarrier(); _mm_sfence()
-#define CompletPastReadsBeforFutureReads _ReadBarrier()
+    u32 volatile NextEntryToWrite;
+    u32 volatile NextEntryToRead;
+    HANDLE SemaphoreHandle; 
 
-internal void PushString(HANDLE SemaphoreHandle, const char *String) {
-    Assert(EntryCount < ArrayCount(Entries));
+    platform_work_queue_entry Entries[256];
+};
 
-    work_queue_entry *Entry = Entries + EntryCount;
-    Entry->StringToPrint = String;
+internal void Win32AddEntry(platform_work_queue *Queue, platform_work_queue_callback *Callback,
+                            void *Data) {
+    u32 NewNextEntryToWrite = (Queue->NextEntryToWrite + 1) % ArrayCount(Queue->Entries);
+    Assert(NewNextEntryToWrite != Queue->NextEntryToRead);
+    platform_work_queue_entry *Entry = Queue->Entries + Queue->NextEntryToWrite;
+    Entry->Callback = Callback;
+    Entry->Data = Data;
+    ++Queue->CompletionGoal;
+    _WriteBarrier();
+    _mm_sfence();
+    Queue->NextEntryToWrite = NewNextEntryToWrite;
+    ReleaseSemaphore(Queue->SemaphoreHandle, 1, 0);
+}
 
-    CompletPastWritesBeforFutureWrites;
+internal b32 Win32DoNextWorkQueueEntry(platform_work_queue *Queue) {
+    b32 ShouldSleep = false;
 
-    ++EntryCount;
+    u32 OriginalNextEntryToRead = Queue->NextEntryToRead;
+    u32 NewNextEntryToRead = (OriginalNextEntryToRead + 1) % ArrayCount(Queue->Entries);
+    if (OriginalNextEntryToRead != Queue->NextEntryToWrite) {
+        u32 Index = InterlockedCompareExchange((LONG volatile *)&Queue->NextEntryToRead,
+                                               NewNextEntryToRead, OriginalNextEntryToRead);
 
-    // TODO: Caveat here - all threads about to sleep, etc.
-    ReleaseSemaphore(SemaphoreHandle, 1, 0);
+        // NOTE: This is for spmc, but its fine for spsc
+        if (Index == OriginalNextEntryToRead) {
+            platform_work_queue_entry Entry = Queue->Entries[Index];
+            Entry.Callback(Queue, Entry.Data);
+            InterlockedIncrement((LONG volatile *)&Queue->CompletionCount);
+        }
+    } else {
+        ShouldSleep = true;
+    }
+
+    return (ShouldSleep);
+}
+
+internal void Win32CompleteAllWork(platform_work_queue *Queue) {
+    while (Queue->CompletionCount != Queue->CompletionGoal) {
+        Win32DoNextWorkQueueEntry(Queue);
+    }
+
+    Queue->CompletionCount = 0;
+    Queue->CompletionGoal = 0;
 }
 
 struct win32_thread_info {
-    HANDLE SemaphoreHandle;
     int LogicalThreadIndex;
+    platform_work_queue *Queue;
 };
 
 // TODO: This will be where the communication thread handles either Read or Write
@@ -362,39 +396,38 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter) {
     win32_thread_info *ThreadInfo = (win32_thread_info *)lpParameter;
 
     for (;;) {
-        if (NextEntryToDo < EntryCount) {
-            // NOTE: This does ++a not a++, hence the - 1.
-            int EntryIndex = InterlockedIncrement((LONG volatile *)&NextEntryToDo) - 1;
-            CompletPastReadsBeforFutureReads;
-            work_queue_entry *Entry = Entries + EntryIndex;
-
-            char Buffer[256];
-            wsprintf(Buffer, "Thread %u: %s\n", ThreadInfo->LogicalThreadIndex, Entry->StringToPrint);
-            OutputDebugStringA(Buffer);
-
-            InterlockedIncrement((LONG volatile *)&EntryCompletionCount);
-        } else {
-            WaitForSingleObjectEx(ThreadInfo->SemaphoreHandle, INFINITE, FALSE);
+        if (Win32DoNextWorkQueueEntry(ThreadInfo->Queue)) {
+            WaitForSingleObjectEx(ThreadInfo->Queue->SemaphoreHandle, INFINITE, FALSE);
         }
     }
 
     //return (0);
 }
 
+internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
+    char Buffer[256];
+    wsprintf(Buffer, "Thread %u: %s\n", GetCurrentThreadId(), (char *)Data);
+    OutputDebugStringA(Buffer);
+}
+
+
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                      int ShowCmd) {
     win32_state Win32State = {};
 
+    win32_thread_info ThreadInfo[1] = {};
+
+    platform_work_queue Queue = {};
+
     u32 InitialCount = 0;
-    win32_thread_info ThreadInfo[8] = {};
     u32 ThreadCount = ArrayCount(ThreadInfo);
-    HANDLE SemaphoreHandle = CreateSemaphoreExA(0, InitialCount, ThreadCount, 0, 0,
+    Queue.SemaphoreHandle = CreateSemaphoreExA(0, InitialCount, ThreadCount, 0, 0,
                                                 SEMAPHORE_ALL_ACCESS);
     
     // NOTE: This creates only 1 extra thread which will handle Reads and Writes.
     for (u32 ThreadIndex = 0; ThreadIndex < ThreadCount; ++ThreadIndex) {
         win32_thread_info *Info = ThreadInfo + ThreadIndex;
-        Info->SemaphoreHandle = SemaphoreHandle;
+        Info->Queue = &Queue;
         Info->LogicalThreadIndex = ThreadIndex;
 
         DWORD ThreadID;
@@ -402,33 +435,33 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
         CloseHandle(ThreadHandle);
     }
 
-    PushString(SemaphoreHandle, "String A0");
-    PushString(SemaphoreHandle, "String A1");
-    PushString(SemaphoreHandle, "String A2");
-    PushString(SemaphoreHandle, "String A3");
-    PushString(SemaphoreHandle, "String A4");
-    PushString(SemaphoreHandle, "String A5");
-    PushString(SemaphoreHandle, "String A6");
-    PushString(SemaphoreHandle, "String A7");
-    PushString(SemaphoreHandle, "String A8");
-    PushString(SemaphoreHandle, "String A9");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A0");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A1");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A2");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A3");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A4");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A5");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A6");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A7");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A8");
+    Win32AddEntry(&Queue, DoWorkerWork, "String A9");
 
-    Sleep(5000);
+    Sleep(1000);
 
-    PushString(SemaphoreHandle, "String B0");
-    PushString(SemaphoreHandle, "String B1");
-    PushString(SemaphoreHandle, "String B2");
-    PushString(SemaphoreHandle, "String B3");
-    PushString(SemaphoreHandle, "String B4");
-    PushString(SemaphoreHandle, "String B5");
-    PushString(SemaphoreHandle, "String B6");
-    PushString(SemaphoreHandle, "String B7");
-    PushString(SemaphoreHandle, "String B8");
-    PushString(SemaphoreHandle, "String B9");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B0");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B1");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B2");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B3");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B4");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B5");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B6");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B7");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B8");
+    Win32AddEntry(&Queue, DoWorkerWork, "String B9");
+
+    Win32CompleteAllWork(&Queue);
 
     Win32LoadXInput();
-
-    while (EntryCount != EntryCompletionCount) ;
 
     WNDCLASSA WindowClass = {};
 
@@ -473,7 +506,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             if (Win32ComHandle != INVALID_HANDLE_VALUE) {
                 Win32ConfigureComDevice(Win32ComHandle);
 
-                // NOTE: Keeping this rn since this worked on a single thread.
+                // NOTE: Keeping this rn since this worked in a single thread.
 #if 0
                 DWORD bytesRead = 0;
                 DWORD bytesWritten = 0;
@@ -515,8 +548,11 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 #endif
 
                 gui_memory GUIMemory = {};
-                GUIMemory.PermanentStorageSize = Megabytes(64);
+                GUIMemory.PermanentStorageSize = Megabytes(128);
                 GUIMemory.TransientStorageSize = Gigabytes(1);
+                GUIMemory.HighPriorityQueue = &Queue;
+                GUIMemory.PlatformAddEntry = Win32AddEntry;
+                GUIMemory.PlatformCompleteAllWork = Win32CompleteAllWork;
                 Win32State.TotalSize =
                     GUIMemory.PermanentStorageSize + GUIMemory.TransientStorageSize;
                 Win32State.RenderMemoryBlock =
