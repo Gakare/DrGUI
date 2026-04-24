@@ -69,18 +69,14 @@ struct render_state {
 
 #pragma pack(push, 1)
 // NOTE: Create a serialization and deserialization protocol
-// - Start byte
 // - Left stick XInput
 // - Left stick YInput
 // - Roll
 // - Pitch
 // - Yaw
-// - End byte
 struct drone_data {
-    b32 Start;
     int LXInput;
     int LYInput;
-    b32 End;
 };
 #pragma pack(pop)
 

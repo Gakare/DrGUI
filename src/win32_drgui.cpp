@@ -280,6 +280,73 @@ internal HANDLE Win32ConnectComDevice(LPCWSTR PortName) {
     return (Result);
 }
 
+internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
+    DCB Win32DCB = {};
+    Win32DCB.DCBlength = sizeof(Win32DCB);
+    GetCommState(Win32ComHandle, &Win32DCB);
+    Win32DCB.BaudRate = 9600;
+    Win32DCB.ByteSize = 8;
+    Win32DCB.Parity = NOPARITY;
+    Win32DCB.StopBits = ONESTOPBIT;
+    SetCommState(Win32ComHandle, &Win32DCB);
+
+    // TODO: Figure out if I even need timeouts or if it should stay as is.
+    // TODO: Figure out how to set the Read/Write timeouts with our desired bytes
+    /* NOTE: RTmax = (N (amount in bytes) * ReadTotalTimeoutM) + ReadTotalTimoutConst
+     *       WTmax = (N (amount in bytes) * WriteTotalTimoutM) + WriteTotalTimoutConst
+     */
+    COMMTIMEOUTS Win32Timeout = {};
+    Win32Timeout.ReadTotalTimeoutMultiplier = 0;
+    Win32Timeout.ReadTotalTimeoutConstant = 0;
+    Win32Timeout.ReadIntervalTimeout = 0;
+    Win32Timeout.WriteTotalTimeoutMultiplier = 0;
+    Win32Timeout.WriteTotalTimeoutConstant = 0;
+    SetCommTimeouts(Win32ComHandle, &Win32Timeout);
+
+    SetCommMask(Win32ComHandle, EV_RXCHAR);
+}
+
+// NOTE: This will be a manual packing of bytes into the buffer
+internal void Win32Serialize(uint8_t *Buffer, drone_data Data) {
+    if (Buffer) {
+        Buffer[0] = (Data.LXInput >> 0) & 0xFF;
+        Buffer[1] = (Data.LXInput >> 8) & 0xFF;
+        Buffer[2] = (Data.LXInput >> 16) & 0xFF;
+        Buffer[3] = (Data.LXInput >> 24) & 0xFF;
+
+        Buffer[4] = (Data.LYInput >> 0) & 0xFF;
+        Buffer[5] = (Data.LYInput >> 8) & 0xFF;
+        Buffer[6] = (Data.LYInput >> 16) & 0xFF;
+        Buffer[7] = (Data.LYInput >> 24) & 0xFF;
+    }
+}
+
+internal drone_data Win32Deserialize(uint8_t *Buffer) {
+    drone_data Result = {};
+    if (Buffer) {
+        Result.LXInput = (int)Buffer[0] | ((int)Buffer[1] << 8) | ((int)Buffer[2] << 16) |
+                         ((int)Buffer[3] << 24);
+        Result.LYInput = (int)Buffer[4] | ((int)Buffer[5] << 8) | ((int)Buffer[6] << 16) |
+                         ((int)Buffer[7] << 24);
+    }
+    return (Result);
+}
+
+#define BUFFER_SIZE 32
+volatile u8 RxBuffer[BUFFER_SIZE];
+volatile u8 Head = 0;
+volatile u8 Tail = 0;
+
+internal u8 GetByte(void) {
+    u8 Byte = RxBuffer[Tail];
+    Tail = (Tail + 1) % BUFFER_SIZE;
+    return (Byte);
+}
+
+u8 BytesAvailable(void) {
+    return (Head + BUFFER_SIZE - Tail) % BUFFER_SIZE;
+}
+
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                      int ShowCmd) {
     win32_state Win32State = {};
@@ -319,92 +386,56 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 #endif
 
 
-            // struct win32_com_dev {
-            //
-            // };
 #if DR_INTERNAL
             LPCWSTR PortName = L"\\\\.\\COM4";
-            void* Win32ComHandle = Win32ConnectComDevice(PortName);
 #else
             LPCWSTR PortName = L"\\\\.\\COM6";
-            HANDLE Win32ComHandle = Win32ConnectComDevice(PortName);
 #endif
-            if (Win32ComHandle != INVALID_HANDLE_VALUE) {
-                DCB Win32DCB = {};
-                Win32DCB.DCBlength = sizeof(Win32DCB);
-                GetCommState(Win32ComHandle, &Win32DCB);
-                Win32DCB.BaudRate = 9600;
-                Win32DCB.ByteSize = 8;
-                Win32DCB.Parity = NOPARITY;
-                Win32DCB.StopBits = ONESTOPBIT;
-                SetCommState(Win32ComHandle, &Win32DCB);
 
-                // TODO: Figure out how to set the Read/Write timeouts with our desired bytes
-                /* NOTE: RTmax = (N (amount in bytes) * ReadTotalTimeoutM) + ReadTotalTimoutConst
-                 *       WTmax = (N (amount in bytes) * WriteTotalTimoutM) + WriteTotalTimoutConst
-                 */
-                COMMTIMEOUTS Win32Timeout = {};
-                Win32Timeout.ReadTotalTimeoutMultiplier = 0;
-                Win32Timeout.ReadTotalTimeoutConstant = 0;
-                Win32Timeout.ReadIntervalTimeout = 0;
-                Win32Timeout.WriteTotalTimeoutMultiplier = 0;
-                Win32Timeout.WriteTotalTimeoutConstant = 0;
-                SetCommTimeouts(Win32ComHandle, &Win32Timeout);
+            HANDLE Win32ComHandle = Win32ConnectComDevice(PortName);
+            if (Win32ComHandle != INVALID_HANDLE_VALUE) {
+                Win32ConfigureComDevice(Win32ComHandle);
 
                 // TODO: I can already see a bug where the server and client will be in a stalemate
                 // because they both are reading
                 // TODO: Need to add threading for both reading and writing
                 // TODO: Figure out if threading will fix this issue
-                // TODO: Use null when doing any asynchronous operation
-                //DWORD bytesRead;
+                DWORD bytesRead = 0;
                 DWORD bytesWritten = 0;
 
                 drone_data Data = {};
-                Data.SensorId = 5;
-                Data.Value = 10;
-                Data.Status = 1;
+                Data.LXInput = 20;
+                Data.LYInput = 40;
 
-                uint8_t buffer[7];
-                buffer[0] = (Data.SensorId >> 0) & 0xFF;
-                buffer[1] = (Data.SensorId >> 8) & 0xFF;
-                buffer[2] = (Data.SensorId >> 16) & 0xFF;
-                buffer[3] = (Data.SensorId >> 24) & 0xFF;
-                buffer[4] = (Data.Value >> 0) & 0xFF;
-                buffer[5] = (Data.Value >> 8) & 0xFF;
-                buffer[6] = (Data.Status);
+                uint8_t Writebuffer[8] = {};
+                Win32Serialize(Writebuffer, Data);
 
-#if 0
+                // TODO: Use this to see if I can receive the data from mcu
                 drone_data Data2 = {};
 
-                Data2.SensorId = (u32)buffer[0] |
-                                ((u32)buffer[1] << 8) |
-                                ((u32)buffer[2] << 16) |
-                                ((u32)buffer[3] << 24);
-                Data2.Value = (u16)buffer[4] | ((u16)buffer[5] << 8);
-                Data2.Status = (u8)buffer[6];
-
-                CloseHandle(Win32ComHandle);
-#endif
-
-
-
+                uint8_t ReadBuffer[8] = {};
+                DWORD EventMask;
+                int Index = 0;
                 while (GlobalRunning) {
-                    // NOTE: Because in both cases, they will be sending to a different OS.
-                    // On Windows just send \n, on Linux just send \r\n
-                    // TODO: Got to figure out how to send packets of data
-                    if(!WriteFile(Win32ComHandle, buffer, sizeof(buffer), &bytesWritten, NULL)) {
+                    if(!WriteFile(Win32ComHandle, Writebuffer, sizeof(Writebuffer),
+                                  &bytesWritten, NULL)) {
                         // NOTE: Failed to send
                     }
 
-
-                    // if (ReadFile(Win32ComHandle, buffer, sizeof(buffer), &bytesRead, NULL)) {
-                    //     const char *FormatIn = "(%lu, %d, %c)";
-                    //     _snprintf_s(buffer, strlen(FormatIn), FormatIn,
-                    //                 Data2.Start, Data2.a, Data2.b);
-                    //     OutputDebugStringA(buffer);
-                    // }
+                    if (WaitCommEvent(Win32ComHandle, &EventMask, NULL)) {
+                        if (EventMask & EV_RXCHAR) {
+                            uint8_t Buffer;
+                            // NOTE: Reads 1 byte at a time
+                            while ((Index < 8) && ReadFile(Win32ComHandle, (void *)&Buffer,
+                                                           sizeof(Buffer), &bytesRead, NULL) )
+                            {
+                                // NOTE: Empty, waiting until the whole packet arrives
+                                ReadBuffer[Index++] = Buffer;
+                            }
+                        }
+                    }
+                    Data2 = Win32Deserialize(ReadBuffer);
                 }
-
 
                 render_memory RenderMemory = {};
                 RenderMemory.PermanentStorageSize = Megabytes(64);
@@ -437,17 +468,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 
                         Win32ProcessPendingMessages(NewKeyboardController);
 
-                        // TODO: Deciding if it should only be 1 controller and 1 keyboard ??
-#if DR_INTERNAL
                         DWORD MaxControllerCount = 2;
-#else
-                        DWORD MaxControllerCount = XUSER_MAX_COUNT;
-                        if (MaxControllerCount >
-                            (ArrayCount(NewInput->Controllers) - 1)) {
-                            MaxControllerCount = (ArrayCount(NewInput->Controllers) - 1);
-                        }
-#endif
-
                         // TODO: Should this be polled more frequently?
                         for (DWORD ControllerIndex = 0;
                         ControllerIndex < MaxControllerCount;
@@ -549,9 +570,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                                 NewController->IsConnected = false;
                             }
                         }
-
-                        drone_data Data;
-                        Data.Value = NewInput->Controllers[0].LStickAverageX;
 
                         offscreen_buffer Buffer = {};
                         Buffer.Memory = GlobalBackBuffer.Memory;

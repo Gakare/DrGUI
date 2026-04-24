@@ -1,5 +1,4 @@
 #if !defined(DRGUI_PLATFORM_H)
-
 #include "types.h"
 
 typedef struct button_state {
