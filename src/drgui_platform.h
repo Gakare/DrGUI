@@ -56,14 +56,14 @@ typedef struct offscreen_buffer {
     int BytesPerPixel;
 } offscreen_buffer;
 
-typedef struct render_memory {
+typedef struct gui_memory {
     b32 IsInitialized;
     u64 PermanentStorageSize;
     void *PermanentStorage; // Required to be cleared to zero at startup
 
     u64 TransientStorageSize;
     void *TransientStorage; // Requiired to be cleared to zero at startup
-} render_memory;
+} gui_memory;
 
 #define DRGUI_PLATFORM_H
 #endif

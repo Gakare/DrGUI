@@ -1,6 +1,5 @@
 local/misc/debuginfo
 build
-test/
 DrGUI
 x64
 .vscode
@@ -9,3 +8,6 @@ x64
 *.obj
 *.pdb
 .vs
+Debug
+Release
+*.atsuo

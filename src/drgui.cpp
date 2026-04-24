@@ -32,13 +32,13 @@ internal void DrawRectangle(offscreen_buffer *Buffer, r32 Minx, r32 Miny, r32 Ma
     }
 }
 
-internal void UpdateAndRender(offscreen_buffer *Buffer, render_memory *Memory, input *Input) {
+internal void UpdateAndRender(offscreen_buffer *Buffer, gui_memory *Memory, input *Input) {
 
     Assert((&Input->Controllers[0].Back - &Input->Controllers[0].Buttons[0]) ==
            (ArrayCount(Input->Controllers[0].Buttons) - 1));
 
-    Assert(sizeof(render_state) <= Memory->PermanentStorageSize);
-    render_state *State = (render_state *)Memory->PermanentStorage;
+    Assert(sizeof(gui_state) <= Memory->PermanentStorageSize);
+    gui_state *State = (gui_state  *)Memory->PermanentStorage;
 
     if (!Memory->IsInitialized) {
         State->XOffset[0] = 0;

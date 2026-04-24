@@ -16,12 +16,9 @@
  *  - Add graph data reading from the bluetooth.
  *
  *  Multithreading:
- *  - Need to implement 3 threads
- *      - Main thread
- *      - Write thread
- *      - Read thread
- *  - I assume the only race condition that I should worry about is when the write thread and read
- *    thread need to access the com handle at the same time. (Can't wait to be wrong)
+ *  - Need to implement 2 threads
+ *      - GUI thread
+ *      - Communication thread
  *
 */
 #include "types.h"
@@ -62,7 +59,7 @@ struct temporary_memory {
     memory_index Used;
 };
 
-struct render_state {
+struct gui_state {
     int XOffset[2];
     int YOffset[2];
 };
@@ -80,7 +77,7 @@ struct drone_data {
 };
 #pragma pack(pop)
 
-internal void UpdateAndRender(offscreen_buffer *Buffer, render_memory *Memory, input *Input);
+internal void UpdateAndRender(offscreen_buffer *Buffer, gui_memory *Memory, input *Input);
 
 #define DRGUI_H
 #endif

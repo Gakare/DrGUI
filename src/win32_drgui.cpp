@@ -1,17 +1,11 @@
 #include "drgui.cpp"
 #include "drgui.h"
 #include "drgui_platform.h"
-
-
-/* Included libraries */
-#include <WinSock2.h>
-#include <ws2bth.h>
-#include <bthsdpdef.h>
-#include <bluetoothapis.h>
-
 #include "win32_drgui.h"
 
+/* Included libraries */
 #include <windows.h>
+#include <intrin.h>
 #include <Xinput.h>
 #include <stdio.h>
 
@@ -290,8 +284,6 @@ internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
     Win32DCB.StopBits = ONESTOPBIT;
     SetCommState(Win32ComHandle, &Win32DCB);
 
-    // TODO: Figure out if I even need timeouts or if it should stay as is.
-    // TODO: Figure out how to set the Read/Write timeouts with our desired bytes
     /* NOTE: RTmax = (N (amount in bytes) * ReadTotalTimeoutM) + ReadTotalTimoutConst
      *       WTmax = (N (amount in bytes) * WriteTotalTimoutM) + WriteTotalTimoutConst
      */
@@ -303,7 +295,8 @@ internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
     Win32Timeout.WriteTotalTimeoutConstant = 0;
     SetCommTimeouts(Win32ComHandle, &Win32Timeout);
 
-    SetCommMask(Win32ComHandle, EV_RXCHAR);
+    // NOTE: Monitors receiving characters and transmission completion
+    SetCommMask(Win32ComHandle, EV_RXCHAR | EV_TXEMPTY);
 }
 
 // NOTE: This will be a manual packing of bytes into the buffer
@@ -332,26 +325,110 @@ internal drone_data Win32Deserialize(uint8_t *Buffer) {
     return (Result);
 }
 
-#define BUFFER_SIZE 32
-volatile u8 RxBuffer[BUFFER_SIZE];
-volatile u8 Head = 0;
-volatile u8 Tail = 0;
+struct work_queue_entry {
+    const char *StringToPrint;
+};
 
-internal u8 GetByte(void) {
-    u8 Byte = RxBuffer[Tail];
-    Tail = (Tail + 1) % BUFFER_SIZE;
-    return (Byte);
+global_variable u32 volatile EntryCompletionCount;
+global_variable u32 volatile NextEntryToDo;
+global_variable u32 volatile EntryCount;
+work_queue_entry Entries[256];
+
+// TODO: Double-check the write ordering stuff on the CPU
+#define CompletPastWritesBeforFutureWrites _WriteBarrier(); _mm_sfence()
+#define CompletPastReadsBeforFutureReads _ReadBarrier()
+
+internal void PushString(HANDLE SemaphoreHandle, const char *String) {
+    Assert(EntryCount < ArrayCount(Entries));
+
+    work_queue_entry *Entry = Entries + EntryCount;
+    Entry->StringToPrint = String;
+
+    CompletPastWritesBeforFutureWrites;
+
+    ++EntryCount;
+
+    // TODO: Caveat here - all threads about to sleep, etc.
+    ReleaseSemaphore(SemaphoreHandle, 1, 0);
 }
 
-u8 BytesAvailable(void) {
-    return (Head + BUFFER_SIZE - Tail) % BUFFER_SIZE;
+struct win32_thread_info {
+    HANDLE SemaphoreHandle;
+    int LogicalThreadIndex;
+};
+
+// TODO: This will be where the communication thread handles either Read or Write
+DWORD WINAPI ThreadProc(LPVOID lpParameter) {
+    win32_thread_info *ThreadInfo = (win32_thread_info *)lpParameter;
+
+    for (;;) {
+        if (NextEntryToDo < EntryCount) {
+            // NOTE: This does ++a not a++, hence the - 1.
+            int EntryIndex = InterlockedIncrement((LONG volatile *)&NextEntryToDo) - 1;
+            CompletPastReadsBeforFutureReads;
+            work_queue_entry *Entry = Entries + EntryIndex;
+
+            char Buffer[256];
+            wsprintf(Buffer, "Thread %u: %s\n", ThreadInfo->LogicalThreadIndex, Entry->StringToPrint);
+            OutputDebugStringA(Buffer);
+
+            InterlockedIncrement((LONG volatile *)&EntryCompletionCount);
+        } else {
+            WaitForSingleObjectEx(ThreadInfo->SemaphoreHandle, INFINITE, FALSE);
+        }
+    }
+
+    //return (0);
 }
 
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                      int ShowCmd) {
     win32_state Win32State = {};
 
+    u32 InitialCount = 0;
+    win32_thread_info ThreadInfo[8] = {};
+    u32 ThreadCount = ArrayCount(ThreadInfo);
+    HANDLE SemaphoreHandle = CreateSemaphoreExA(0, InitialCount, ThreadCount, 0, 0,
+                                                SEMAPHORE_ALL_ACCESS);
+    
+    // NOTE: This creates only 1 extra thread which will handle Reads and Writes.
+    for (u32 ThreadIndex = 0; ThreadIndex < ThreadCount; ++ThreadIndex) {
+        win32_thread_info *Info = ThreadInfo + ThreadIndex;
+        Info->SemaphoreHandle = SemaphoreHandle;
+        Info->LogicalThreadIndex = ThreadIndex;
+
+        DWORD ThreadID;
+        HANDLE ThreadHandle = CreateThread(0, 0, ThreadProc, Info, 0, &ThreadID);
+        CloseHandle(ThreadHandle);
+    }
+
+    PushString(SemaphoreHandle, "String A0");
+    PushString(SemaphoreHandle, "String A1");
+    PushString(SemaphoreHandle, "String A2");
+    PushString(SemaphoreHandle, "String A3");
+    PushString(SemaphoreHandle, "String A4");
+    PushString(SemaphoreHandle, "String A5");
+    PushString(SemaphoreHandle, "String A6");
+    PushString(SemaphoreHandle, "String A7");
+    PushString(SemaphoreHandle, "String A8");
+    PushString(SemaphoreHandle, "String A9");
+
+    Sleep(5000);
+
+    PushString(SemaphoreHandle, "String B0");
+    PushString(SemaphoreHandle, "String B1");
+    PushString(SemaphoreHandle, "String B2");
+    PushString(SemaphoreHandle, "String B3");
+    PushString(SemaphoreHandle, "String B4");
+    PushString(SemaphoreHandle, "String B5");
+    PushString(SemaphoreHandle, "String B6");
+    PushString(SemaphoreHandle, "String B7");
+    PushString(SemaphoreHandle, "String B8");
+    PushString(SemaphoreHandle, "String B9");
+
     Win32LoadXInput();
+
+    while (EntryCount != EntryCompletionCount) ;
 
     WNDCLASSA WindowClass = {};
 
@@ -396,10 +473,8 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             if (Win32ComHandle != INVALID_HANDLE_VALUE) {
                 Win32ConfigureComDevice(Win32ComHandle);
 
-                // TODO: I can already see a bug where the server and client will be in a stalemate
-                // because they both are reading
-                // TODO: Need to add threading for both reading and writing
-                // TODO: Figure out if threading will fix this issue
+                // NOTE: Keeping this rn since this worked on a single thread.
+#if 0
                 DWORD bytesRead = 0;
                 DWORD bytesWritten = 0;
 
@@ -417,39 +492,41 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 DWORD EventMask;
                 int Index = 0;
                 while (GlobalRunning) {
-                    if(!WriteFile(Win32ComHandle, Writebuffer, sizeof(Writebuffer),
-                                  &bytesWritten, NULL)) {
-                        // NOTE: Failed to send
-                    }
-
                     if (WaitCommEvent(Win32ComHandle, &EventMask, NULL)) {
+                        if (EventMask & EV_TXEMPTY) {
+                            if(!WriteFile(Win32ComHandle, Writebuffer, sizeof(Writebuffer),
+                                          &bytesWritten, NULL)) {
+                                // NOTE: Failed to send
+                            }
+                        }
+
                         if (EventMask & EV_RXCHAR) {
                             uint8_t Buffer;
                             // NOTE: Reads 1 byte at a time
                             while ((Index < 8) && ReadFile(Win32ComHandle, (void *)&Buffer,
                                                            sizeof(Buffer), &bytesRead, NULL) )
                             {
-                                // NOTE: Empty, waiting until the whole packet arrives
                                 ReadBuffer[Index++] = Buffer;
                             }
                         }
                     }
                     Data2 = Win32Deserialize(ReadBuffer);
                 }
+#endif
 
-                render_memory RenderMemory = {};
-                RenderMemory.PermanentStorageSize = Megabytes(64);
-                RenderMemory.TransientStorageSize = Gigabytes(1);
+                gui_memory GUIMemory = {};
+                GUIMemory.PermanentStorageSize = Megabytes(64);
+                GUIMemory.TransientStorageSize = Gigabytes(1);
                 Win32State.TotalSize =
-                    RenderMemory.PermanentStorageSize + RenderMemory.TransientStorageSize;
+                    GUIMemory.PermanentStorageSize + GUIMemory.TransientStorageSize;
                 Win32State.RenderMemoryBlock =
                     VirtualAlloc(BaseAddress, (size_t)Win32State.TotalSize,
                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-                RenderMemory.PermanentStorage = Win32State.RenderMemoryBlock;
-                RenderMemory.TransientStorage =
-                    ((u8 *)RenderMemory.PermanentStorage + RenderMemory.PermanentStorageSize);
+                GUIMemory.PermanentStorage = Win32State.RenderMemoryBlock;
+                GUIMemory.TransientStorage =
+                    ((u8 *)GUIMemory.PermanentStorage + GUIMemory.PermanentStorageSize);
 
-                if (RenderMemory.PermanentStorage && RenderMemory.TransientStorage) {
+                if (GUIMemory.PermanentStorage && GUIMemory.TransientStorage) {
                     input Input[2] = {};
                     input *NewInput = &Input[0];
                     input *OldInput = &Input[1];
@@ -578,7 +655,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                         Buffer.Pitch = GlobalBackBuffer.Pitch;
                         Buffer.BytesPerPixel = GlobalBackBuffer.BytesPerPixel;
 
-                        UpdateAndRender(&Buffer, &RenderMemory, NewInput);
+                        UpdateAndRender(&Buffer, &GUIMemory, NewInput);
 
                         win32_window_dimension Dimension = Win32GetWindowDimension(Window);
                         HDC DeviceContext = GetDC(Window);
