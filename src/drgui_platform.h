@@ -56,6 +56,8 @@ typedef struct offscreen_buffer {
     int BytesPerPixel;
 } offscreen_buffer;
 
+typedef struct platform_file_handle platform_file_handle;
+
 struct platform_work_queue;
 #define PLATFORM_WORK_QUEUE_CALLBACK(name) void name(platform_work_queue *Queue, void *Data)
 typedef PLATFORM_WORK_QUEUE_CALLBACK(platform_work_queue_callback);

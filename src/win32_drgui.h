@@ -21,6 +21,11 @@ struct win32_state {
     void *RenderMemoryBlock;
 };
 
+struct win32_com {
+    HANDLE ComHandle;
+
+};
+
 
 #define WIN32_DRGUI_H
 #endif
