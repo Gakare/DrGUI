@@ -1,11 +1,8 @@
 #if !defined(DRGUI_H)
 /* TODO:
  *  COM Port
- *  - Connect to the COM PORT (Currently Com 4). Will need to adjust if connecting with another device
- *  - Be able to Write data
- *  - Be able to Read data
- *  - VCC: Use a constant 3.6V-6V for a stable power supply, mandatory.
- *  - TX (PD1) - RX (PD0) 
+ *  - NOTE: VCC Use a constant 3.6V-6V for a stable power supply, mandatory.
+ *  - NOTE: TX (PD1) - RX (PD0) on the Atmega328P/PB
  *
  *  Controller:
  *  - See if I can fix the controller sensitivity that will be used to control drone and send via UART.
@@ -13,7 +10,7 @@
  *  GUI:
  *  - Display the inputs in a more controlled manner, ideally as close to what the joysticks are 
  *  doing in real life as possible.
- *  - Add graph data reading from the bluetooth.
+ *  - Add graph data reading from the bluetooth. (This might be where I use multithreading on the GUI)
  *
  *  Multithreading:
  *  - Need to implement 2 threads
@@ -21,24 +18,9 @@
  *      - Communication thread
  *
 */
+
 #include "types.h"
 #include "drgui_platform.h"
-
-#if DR_INTERNAL
-#define Assert(Expression)                          \
-    if (!(Expression)) {                            \
-        *(volatile int *)0 = 0;                     \
-    }
-#else
-#define Assert(Expression)
-#endif
-
-#define ArrayCount(Arr) (sizeof(Arr) / sizeof((Arr)[0]))
-
-#define Kilobytes(Val) ((Val) * 1024)
-#define Megabytes(Val) (Kilobytes(Val) * 1024)
-#define Gigabytes(Val) (Megabytes(Val) * 1024)
-#define Terabytes(Val) (Gigabytes(Val) * 1024)
 
 inline controller_input *GetController(input *Input, int ControllerIndex) {
     Assert(ControllerIndex < ArrayCount(Input->Controllers));
@@ -63,19 +45,6 @@ struct gui_state {
     int XOffset[2];
     int YOffset[2];
 };
-
-#pragma pack(push, 1)
-// NOTE: Create a serialization and deserialization protocol
-// - Left stick XInput
-// - Left stick YInput
-// - Roll
-// - Pitch
-// - Yaw
-struct drone_data {
-    int LXInput;
-    int LYInput;
-};
-#pragma pack(pop)
 
 internal void UpdateAndRender(offscreen_buffer *Buffer, gui_memory *Memory, input *Input);
 

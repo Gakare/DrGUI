@@ -1,6 +1,23 @@
 #if !defined(DRGUI_PLATFORM_H)
 #include "types.h"
 
+#if DR_INTERNAL
+#define Assert(Expression)                          \
+    if (!(Expression)) {                            \
+        *(volatile int *)0 = 0;                     \
+    }
+#else
+#define Assert(Expression)
+#endif
+
+#define ArrayCount(Arr) (sizeof(Arr) / sizeof((Arr)[0]))
+
+#define Kilobytes(Val) ((Val) * 1024)
+#define Megabytes(Val) (Kilobytes(Val) * 1024)
+#define Gigabytes(Val) (Megabytes(Val) * 1024)
+#define Terabytes(Val) (Gigabytes(Val) * 1024)
+
+
 typedef struct button_state {
     int HalfTransitionCount;
     b32 EndedDown;
@@ -74,12 +91,26 @@ typedef struct gui_memory {
 
     u64 TransientStorageSize;
     void *TransientStorage; // Required to be cleared to zero at startup
+} gui_memory;
 
+struct platform_com_dev {
+    void* ComHandle;
+};
+
+typedef struct uart_memory {
+    b32 IsInitialized;
+
+    u64 PermanentStorageSize;
+    void *PermanentStorage;
+
+    u64 TransientStorageSize;
+    void *TransientStorage;
+    
     platform_work_queue *HighPriorityQueue;
 
     platform_add_entry *PlatformAddEntry;
     platform_complete_all_work *PlatformCompleteAllWork;
-} gui_memory;
+} uart_memory;
 
 #define DRGUI_PLATFORM_H
 #endif

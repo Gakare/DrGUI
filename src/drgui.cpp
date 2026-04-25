@@ -41,9 +41,6 @@ internal void UpdateAndRender(offscreen_buffer *Buffer, gui_memory *Memory, inpu
     gui_state *State = (gui_state  *)Memory->PermanentStorage;
 
     if (!Memory->IsInitialized) {
-        PlatformAddEntry = Memory->PlatformAddEntry;
-        PlatformCompleteAllWork = Memory->PlatformCompleteAllWork;
-
         State->XOffset[0] = 0;
         State->YOffset[0] = 0;
         State->XOffset[1] = 0;

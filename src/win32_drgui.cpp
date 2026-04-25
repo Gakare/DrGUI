@@ -51,7 +51,7 @@ internal void ToggleFullScreen(HWND Window) {
         SetWindowPlacement(Window, &GlobalWindowPosition);
         SetWindowPos(Window, NULL, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
-                         SWP_FRAMECHANGED);
+                     SWP_FRAMECHANGED);
     }
 }
 
@@ -266,10 +266,6 @@ internal void Win32ProcessXInputDigitalButton(DWORD XInputButtonState,
     NewState->HalfTransitionCount = (OldState->EndedDown != NewState->EndedDown) ? 1 : 0;
 }
 
-struct platform_com_dev {
-    HANDLE ComHandle;
-};
-
 internal platform_com_dev Win32ConnectComDevice(LPCWSTR PortName) {
     platform_com_dev Result;
     Result.ComHandle = CreateFileW(PortName, 
@@ -301,32 +297,6 @@ internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
 
     // NOTE: Monitors receiving characters and transmission completion
     SetCommMask(Win32ComHandle, EV_RXCHAR | EV_TXEMPTY);
-}
-
-// NOTE: This will be a manual packing of bytes into the buffer
-internal void Win32Serialize(uint8_t *Buffer, drone_data Data) {
-    if (Buffer) {
-        Buffer[0] = (Data.LXInput >> 0) & 0xFF;
-        Buffer[1] = (Data.LXInput >> 8) & 0xFF;
-        Buffer[2] = (Data.LXInput >> 16) & 0xFF;
-        Buffer[3] = (Data.LXInput >> 24) & 0xFF;
-
-        Buffer[4] = (Data.LYInput >> 0) & 0xFF;
-        Buffer[5] = (Data.LYInput >> 8) & 0xFF;
-        Buffer[6] = (Data.LYInput >> 16) & 0xFF;
-        Buffer[7] = (Data.LYInput >> 24) & 0xFF;
-    }
-}
-
-internal drone_data Win32Deserialize(uint8_t *Buffer) {
-    drone_data Result = {};
-    if (Buffer) {
-        Result.LXInput = (int)Buffer[0] | ((int)Buffer[1] << 8) | ((int)Buffer[2] << 16) |
-                         ((int)Buffer[3] << 24);
-        Result.LYInput = (int)Buffer[4] | ((int)Buffer[5] << 8) | ((int)Buffer[6] << 16) |
-                         ((int)Buffer[7] << 24);
-    }
-    return (Result);
 }
 
 struct platform_work_queue_entry {
@@ -395,7 +365,6 @@ struct win32_thread_info {
     platform_work_queue *Queue;
 };
 
-// TODO: This will be where the communication thread handles either Read or Write
 DWORD WINAPI ThreadProc(LPVOID lpParameter) {
     win32_thread_info *ThreadInfo = (win32_thread_info *)lpParameter;
 
@@ -422,15 +391,16 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
     LPCWSTR PortName = L"\\\\.\\COM6";
 #endif
 
+#if 0
     platform_com_dev ComDev = {};
     ComDev.ComHandle = INVALID_HANDLE_VALUE;
     while (ComDev.ComHandle == INVALID_HANDLE_VALUE) {
-        // NOTE: It will continuously try to connect to the com port befor running
-        // the program.
+        // TODO: Add text to display waiting for com device.
         ComDev = Win32ConnectComDevice(PortName);
     }
 
     Win32ConfigureComDevice(ComDev.ComHandle);
+#endif
 
     win32_state Win32State = {};
 
@@ -453,34 +423,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
         HANDLE ThreadHandle = CreateThread(0, 0, ThreadProc, Info, 0, &ThreadID);
         CloseHandle(ThreadHandle);
     }
-
-#if 0
-    Win32AddEntry(&Queue, DoWorkerWork, "String A0");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A1");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A2");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A3");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A4");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A5");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A6");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A7");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A8");
-    Win32AddEntry(&Queue, DoWorkerWork, "String A9");
-
-    Sleep(1000);
-
-    Win32AddEntry(&Queue, DoWorkerWork, "String B0");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B1");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B2");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B3");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B4");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B5");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B6");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B7");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B8");
-    Win32AddEntry(&Queue, DoWorkerWork, "String B9");
-
-    Win32CompleteAllWork(&Queue);
-#endif
 
     Win32LoadXInput();
 
@@ -515,17 +457,33 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 #else
             LPVOID BaseAddress = 0;
 #endif
+            uart_memory UARTMemory = {};
+            // NOTE: Probably don't need that much memory for serial communication
+            UARTMemory.PermanentStorageSize = Megabytes(64);
+            UARTMemory.TransientStorageSize = Megabytes(500);
+            UARTMemory.HighPriorityQueue = &Queue;
+            UARTMemory.PlatformAddEntry = Win32AddEntry;
+            UARTMemory.PlatformCompleteAllWork = Win32CompleteAllWork;
+
+            Win32State.UARTMemoryTotalSize =
+                UARTMemory.PermanentStorageSize + UARTMemory.TransientStorageSize;
+            Win32State.UARTMemoryBlock =
+                VirtualAlloc(BaseAddress, (size_t)Win32State.UARTMemoryTotalSize,
+                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            UARTMemory.PermanentStorage = Win32State.UARTMemoryBlock;
+            UARTMemory.TransientStorage = 
+                ((u8 *)UARTMemory.PermanentStorage + UARTMemory.PermanentStorageSize);
+
+            LPVOID NewBaseAddress = (u8 *)UARTMemory.TransientStorage + UARTMemory.TransientStorageSize;
 
             gui_memory GUIMemory = {};
             GUIMemory.PermanentStorageSize = Megabytes(128);
             GUIMemory.TransientStorageSize = Gigabytes(1);
-            GUIMemory.HighPriorityQueue = &Queue;
-            GUIMemory.PlatformAddEntry = Win32AddEntry;
-            GUIMemory.PlatformCompleteAllWork = Win32CompleteAllWork;
-            Win32State.TotalSize =
+
+            Win32State.RenderMemoryTotalSize =
                 GUIMemory.PermanentStorageSize + GUIMemory.TransientStorageSize;
             Win32State.RenderMemoryBlock =
-                VirtualAlloc(BaseAddress, (size_t)Win32State.TotalSize,
+                VirtualAlloc(NewBaseAddress, (size_t)Win32State.RenderMemoryTotalSize,
                              MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
             GUIMemory.PermanentStorage = Win32State.RenderMemoryBlock;
             GUIMemory.TransientStorage =
@@ -550,6 +508,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 
                     Win32ProcessPendingMessages(NewKeyboardController);
 
+                    // NOTE: Just 1 keyboard and 1 controller.
                     DWORD MaxControllerCount = 2;
                     // TODO: Should this be polled more frequently?
                     for (DWORD ControllerIndex = 0;
@@ -606,7 +565,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                                 NewController->StickAverageX = 1.0f;
                             }
 #endif
-
                             r32 Threshold = 0.5f;
                             Win32ProcessXInputDigitalButton(
                                 (NewController->LStickAverageX < -Threshold) ? 1 : 0,
@@ -652,45 +610,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                             NewController->IsConnected = false;
                         }
                     }
-#if 1
-                    DWORD bytesRead = 0;
-                    DWORD bytesWritten = 0;
-
-                    drone_data Data = {};
-                    Data.LXInput = 20;
-                    Data.LYInput = 40;
-
-
-                    uint8_t Writebuffer[8] = {};
-                    Win32Serialize(Writebuffer, Data);
-
-                    // TODO: Use this to see if I can receive the data from mcu
-                    drone_data Data2 = {};
-
-                    uint8_t ReadBuffer[8] = {};
-                    DWORD EventMask;
-                    int Index = 0;
-                    if (WaitCommEvent(ComDev.ComHandle, &EventMask, NULL)) {
-                        if (EventMask & EV_TXEMPTY) {
-                            if(!WriteFile(ComDev.ComHandle, Writebuffer, sizeof(Writebuffer),
-                                          &bytesWritten, NULL)) {
-                                // NOTE: Failed to send
-                            }
-                        }
-
-                        if (EventMask & EV_RXCHAR) {
-                            uint8_t Buffer;
-                            // NOTE: Reads 1 byte at a time
-                            while ((Index < 8) && ReadFile(ComDev.ComHandle, (void *)&Buffer,
-                                                           sizeof(Buffer), &bytesRead, NULL) )
-                            {
-                                ReadBuffer[Index++] = Buffer;
-                            }
-                        }
-                    }
-                    Data2 = Win32Deserialize(ReadBuffer);
-#endif
-
 
                     offscreen_buffer Buffer = {};
                     Buffer.Memory = GlobalBackBuffer.Memory;
@@ -712,7 +631,9 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 // TODO: Logging
             }
 
+#if 0
             CloseHandle(ComDev.ComHandle);
+#endif
         } else {
             // TODO: Logging
         }

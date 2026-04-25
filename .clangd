@@ -1,2 +1,4 @@
+Diagnostics:
+  Suppress: ['*']
 CompileFlags:
   Add: [-DDR_INTERNAL=1]

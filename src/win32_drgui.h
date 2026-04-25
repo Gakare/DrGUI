@@ -17,15 +17,11 @@ struct win32_window_dimension {
 };
 
 struct win32_state {
-    u64 TotalSize;
+    u64 RenderMemoryTotalSize;
     void *RenderMemoryBlock;
+    u64 UARTMemoryTotalSize;
+    void *UARTMemoryBlock;
 };
-
-struct win32_com {
-    HANDLE ComHandle;
-
-};
-
 
 #define WIN32_DRGUI_H
 #endif
