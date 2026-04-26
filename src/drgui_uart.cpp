@@ -1,4 +1,5 @@
-#include "drgui_platform.h"
+#include "drgui_uart.h"
+#include "drgui_math.h"
 
 // NOTE: This will be a manual packing of bytes into the buffer
 internal void PacketSerialize(uint8_t *Buffer, drone_data Data) {
@@ -26,11 +27,8 @@ internal drone_data PacketDeserialize(uint8_t *Buffer) {
     return (Result);
 }
 
-internal void UpdateAndCommunicate(platform_com_dev ComDev, uart_memory *Memory,
-                                   drone_data DataPacket) {
-    DWORD bytesRead = 0;
-    DWORD bytesWritten = 0;
-
+internal void UpdateAndCommunicate(platform_com_dev ComDev, uart_memory *Memory) {
+#if 0
     drone_data Data = {};
     Data.LXInput = 20;
     Data.LYInput = 40;
@@ -55,11 +53,12 @@ internal void UpdateAndCommunicate(platform_com_dev ComDev, uart_memory *Memory,
             uint8_t Buffer;
             // NOTE: Reads 1 byte at a time
             while ((Index < 8) && ReadFile(ComDev.ComHandle, (void *)&Buffer,
-                                           sizeof(Buffer), &bytesRead, NULL) )
+                                           sizeof(Buffer), &bytesRead, NULL))
             {
                 ReadBuffer[Index++] = Buffer;
             }
         }
     }
     Data2 = Win32Deserialize(ReadBuffer);
+#endif
 }

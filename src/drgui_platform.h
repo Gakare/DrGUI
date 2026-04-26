@@ -75,10 +75,23 @@ typedef struct offscreen_buffer {
 
 typedef struct platform_file_handle platform_file_handle;
 
+// TODO: See if this needs more work to be more robust if blocking becomes an issue
+typedef struct read_com_result {
+    u32 ContentSize;
+    void *Contents;
+} read_com_result;
+#define PLATFORM_READ_COM(name) read_com_result name(void *ComHandle, void* Buffer, u32 PacketSize)
+typedef PLATFORM_READ_COM(platform_read_com);
+
+#define PLATFORM_FREE_FILE_MEMORY(name) void name(void *Memory)
+typedef PLATFORM_FREE_FILE_MEMORY(platform_free_file_memory);
+
+#define PLATFORM_WRITE_COM(name) b32 name(void *ComHandle, u32 PacketSize, void *Memory)
+typedef PLATFORM_WRITE_COM(platform_write_com);
+
 struct platform_work_queue;
 #define PLATFORM_WORK_QUEUE_CALLBACK(name) void name(platform_work_queue *Queue, void *Data)
 typedef PLATFORM_WORK_QUEUE_CALLBACK(platform_work_queue_callback);
-
 
 typedef void platform_add_entry(platform_work_queue *Queue,
                            platform_work_queue_callback *Callback, void *Data);

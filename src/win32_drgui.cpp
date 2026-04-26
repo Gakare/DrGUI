@@ -1,5 +1,7 @@
 #include "drgui.cpp"
 #include "drgui.h"
+#include "drgui_uart.cpp"
+#include "drgui_uart.h"
 #include "drgui_platform.h"
 #include "win32_drgui.h"
 
@@ -26,6 +28,7 @@ global_variable x_input_set_state *XInputSetState_ = XInputSetStateStub;
 
 /* Global Variables */
 global_variable b32 GlobalRunning = true;
+global_variable b32 GlobalUARTRunning = true;
 global_variable win32_offscreen_buffer GlobalBackBuffer;
 global_variable WINDOWPLACEMENT GlobalWindowPosition = {sizeof(GlobalWindowPosition)};
 global_variable b32 GlobalIsFullScreen;
@@ -124,10 +127,12 @@ LRESULT CALLBACK Win32MainWindowCallBack(HWND Window, UINT Msg, WPARAM WParam, L
         } break;
 
         case WM_DESTROY: {
+            GlobalUARTRunning = false;
             GlobalRunning = false;
         } break;
 
         case WM_CLOSE: {
+            GlobalUARTRunning = false;
             GlobalRunning = false;
         } break;
 
@@ -299,6 +304,42 @@ internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
     SetCommMask(Win32ComHandle, EV_RXCHAR | EV_TXEMPTY);
 }
 
+PLATFORM_FREE_FILE_MEMORY(PlatformFreeFileMemory) {
+    if (Memory) {
+        VirtualFree(Memory, 0, MEM_RELEASE);
+    }
+}
+
+PLATFORM_READ_COM(PlatformReadCom) {
+    read_com_result Result = {};
+    Result.Contents =
+        VirtualAlloc(0, PacketSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (Result.Contents) {
+        DWORD BytesRead = 0;
+        // TODO: Handle blocking with I/O Completion Port
+        if (ReadFile(ComHandle, Result.Contents, PacketSize, &BytesRead, 0) && 
+            (PacketSize == BytesRead)) {
+            Result.ContentSize = PacketSize;
+        } else {
+            PlatformFreeFileMemory(Result.Contents);
+            Result.Contents = 0;
+        }
+    }
+    return (Result);
+}
+
+PLATFORM_WRITE_COM(PlatformWriteCom) {
+    b32 Result = false;
+
+    DWORD BytesWritten = 0;
+    if (WriteFile(ComHandle, Memory, PacketSize, &BytesWritten, 0)) {
+        Result = (BytesWritten == PacketSize);
+    } else {
+    }
+
+    return (Result);
+}
+
 struct platform_work_queue_entry {
     platform_work_queue_callback *Callback;
     void *Data;
@@ -377,21 +418,20 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter) {
     //return (0);
 }
 
-internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
-    char Buffer[256];
-    wsprintf(Buffer, "Thread %u: %s\n", GetCurrentThreadId(), (char *)Data);
-    OutputDebugStringA(Buffer);
-}
+struct uart_thread_info {
+    uart_memory *Memory;
+};
 
-int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
-                     int ShowCmd) {
+DWORD WINAPI CreateUARTThreadAndSit(LPVOID lpParameter) {
+    uart_thread_info *ThreadInfo = (uart_thread_info *)lpParameter;
+
 #if DR_INTERNAL
     LPCWSTR PortName = L"\\\\.\\COM4";
 #else
     LPCWSTR PortName = L"\\\\.\\COM6";
 #endif
 
-#if 0
+    OutputDebugString("I successfully created a UART thread\n");
     platform_com_dev ComDev = {};
     ComDev.ComHandle = INVALID_HANDLE_VALUE;
     while (ComDev.ComHandle == INVALID_HANDLE_VALUE) {
@@ -400,11 +440,27 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
     }
 
     Win32ConfigureComDevice(ComDev.ComHandle);
-#endif
+    while (GlobalUARTRunning) {
+        UpdateAndCommunicate(ComDev, ThreadInfo->Memory);
+    }
 
+    CloseHandle(ComDev.ComHandle);
+
+    return (0);
+}
+
+internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
+    char Buffer[256];
+    wsprintf(Buffer, "Thread %u: %s\n", GetCurrentThreadId(), (char *)Data);
+    OutputDebugStringA(Buffer);
+}
+
+int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
+                     int ShowCmd) {
     win32_state Win32State = {};
 
-    win32_thread_info ThreadInfo[1] = {};
+    // IMPORTANT: Determine how many threads Evan's machine and adjust if necessary.
+    win32_thread_info ThreadInfo[4] = {};
 
     platform_work_queue Queue = {};
 
@@ -413,7 +469,7 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
     Queue.SemaphoreHandle = CreateSemaphoreExA(0, InitialCount, ThreadCount, 0, 0,
                                                 SEMAPHORE_ALL_ACCESS);
     
-    // NOTE: This creates only 1 extra thread which will handle Reads and Writes.
+    // This spawns worker threads
     for (u32 ThreadIndex = 0; ThreadIndex < ThreadCount; ++ThreadIndex) {
         win32_thread_info *Info = ThreadInfo + ThreadIndex;
         Info->Queue = &Queue;
@@ -475,6 +531,13 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 ((u8 *)UARTMemory.PermanentStorage + UARTMemory.PermanentStorageSize);
 
             LPVOID NewBaseAddress = (u8 *)UARTMemory.TransientStorage + UARTMemory.TransientStorageSize;
+            if (UARTMemory.PermanentStorage && UARTMemory.TransientStorage) {
+                uart_thread_info Info[1] = {};
+                Info[0].Memory = &UARTMemory;
+                DWORD ThreadID;
+                HANDLE ThreadHandle = CreateThread(0, 0, CreateUARTThreadAndSit, Info, 0, &ThreadID);
+                CloseHandle(ThreadHandle);
+            }
 
             gui_memory GUIMemory = {};
             GUIMemory.PermanentStorageSize = Megabytes(128);
@@ -626,14 +689,10 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                                                Dimension.Width, Dimension.Height);
                     ReleaseDC(Window, DeviceContext);
                 }
-
             } else {
                 // TODO: Logging
             }
 
-#if 0
-            CloseHandle(ComDev.ComHandle);
-#endif
         } else {
             // TODO: Logging
         }
