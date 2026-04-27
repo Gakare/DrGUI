@@ -271,20 +271,22 @@ internal void Win32ProcessXInputDigitalButton(DWORD XInputButtonState,
     NewState->HalfTransitionCount = (OldState->EndedDown != NewState->EndedDown) ? 1 : 0;
 }
 
-internal platform_com_dev Win32ConnectComDevice(LPCWSTR PortName) {
-    platform_com_dev Result;
-    Result.ComHandle = CreateFileW(PortName, 
-                         GENERIC_READ | GENERIC_WRITE, 0,
-                         NULL, OPEN_EXISTING, 0, NULL);
+internal platform_com_dev Win32InitComDevice(u32 *PortName) {
+    platform_com_dev Result = {};
+    Result.ComHandle = INVALID_HANDLE_VALUE;
+    Result.PortName = PortName;
     return (Result);
 }
 
 internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
+    u32 BaudRate = 9600;
+    u8 ByteSize = 8;
+
     DCB Win32DCB = {};
     Win32DCB.DCBlength = sizeof(Win32DCB);
     GetCommState(Win32ComHandle, &Win32DCB);
-    Win32DCB.BaudRate = 9600;
-    Win32DCB.ByteSize = 8;
+    Win32DCB.BaudRate = BaudRate;
+    Win32DCB.ByteSize = ByteSize;
     Win32DCB.Parity = NOPARITY;
     Win32DCB.StopBits = ONESTOPBIT;
     SetCommState(Win32ComHandle, &Win32DCB);
@@ -418,33 +420,23 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter) {
     //return (0);
 }
 
-struct uart_thread_info {
-    uart_memory *Memory;
-};
-
-DWORD WINAPI CreateUARTThreadAndSit(LPVOID lpParameter) {
-    uart_thread_info *ThreadInfo = (uart_thread_info *)lpParameter;
-
+DWORD WINAPI ConnectUART(LPVOID lpParameter) {
+    platform_com_dev *ComDev = (platform_com_dev *)lpParameter;
+    
 #if DR_INTERNAL
-    LPCWSTR PortName = L"\\\\.\\COM4";
-#else
-    LPCWSTR PortName = L"\\\\.\\COM6";
+    char Buffer[256];
+    wsprintf(Buffer, "Thread %u: Connecting Com Device\n", GetCurrentThreadId());
+    OutputDebugStringA(Buffer);
 #endif
 
-    OutputDebugString("I successfully created a UART thread\n");
-    platform_com_dev ComDev = {};
-    ComDev.ComHandle = INVALID_HANDLE_VALUE;
-    while (ComDev.ComHandle == INVALID_HANDLE_VALUE) {
+    while (ComDev->ComHandle == INVALID_HANDLE_VALUE) {
         // TODO: Add text to display waiting for com device.
-        ComDev = Win32ConnectComDevice(PortName);
+        ComDev->ComHandle = CreateFileW((LPCWSTR)ComDev->PortName, 
+                                        GENERIC_READ | GENERIC_WRITE, 0,
+                                        NULL, OPEN_EXISTING, 0, NULL);
     }
 
-    Win32ConfigureComDevice(ComDev.ComHandle);
-    while (GlobalUARTRunning) {
-        UpdateAndCommunicate(ComDev, ThreadInfo->Memory);
-    }
-
-    CloseHandle(ComDev.ComHandle);
+    Win32ConfigureComDevice(ComDev->ComHandle);
 
     return (0);
 }
@@ -453,6 +445,9 @@ internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
     char Buffer[256];
     wsprintf(Buffer, "Thread %u: %s\n", GetCurrentThreadId(), (char *)Data);
     OutputDebugStringA(Buffer);
+}
+
+internal PLATFORM_WORK_QUEUE_CALLBACK(ConnectComDevice) {
 }
 
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
@@ -509,36 +504,20 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             GlobalRunning = true;
 
 #if DR_INTERNAL
+    LPCWSTR PortName = L"\\\\.\\COM4";
+#else
+    LPCWSTR PortName = L"\\\\.\\COM6";
+#endif
+            platform_com_dev ComDev = Win32InitComDevice((u32 *)PortName);
+            DWORD ThreadID;
+            HANDLE ThreadHandle = CreateThread(0, 0, ConnectUART, &ComDev, 0, &ThreadID);
+            CloseHandle(ThreadHandle);
+
+#if DR_INTERNAL
             LPVOID BaseAddress = (LPVOID)Terabytes((u64)2);
 #else
             LPVOID BaseAddress = 0;
 #endif
-            uart_memory UARTMemory = {};
-            // NOTE: Probably don't need that much memory for serial communication
-            UARTMemory.PermanentStorageSize = Megabytes(64);
-            UARTMemory.TransientStorageSize = Megabytes(500);
-            UARTMemory.HighPriorityQueue = &Queue;
-            UARTMemory.PlatformAddEntry = Win32AddEntry;
-            UARTMemory.PlatformCompleteAllWork = Win32CompleteAllWork;
-
-            Win32State.UARTMemoryTotalSize =
-                UARTMemory.PermanentStorageSize + UARTMemory.TransientStorageSize;
-            Win32State.UARTMemoryBlock =
-                VirtualAlloc(BaseAddress, (size_t)Win32State.UARTMemoryTotalSize,
-                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-            UARTMemory.PermanentStorage = Win32State.UARTMemoryBlock;
-            UARTMemory.TransientStorage = 
-                ((u8 *)UARTMemory.PermanentStorage + UARTMemory.PermanentStorageSize);
-
-            LPVOID NewBaseAddress = (u8 *)UARTMemory.TransientStorage + UARTMemory.TransientStorageSize;
-            if (UARTMemory.PermanentStorage && UARTMemory.TransientStorage) {
-                uart_thread_info Info[1] = {};
-                Info[0].Memory = &UARTMemory;
-                DWORD ThreadID;
-                HANDLE ThreadHandle = CreateThread(0, 0, CreateUARTThreadAndSit, Info, 0, &ThreadID);
-                CloseHandle(ThreadHandle);
-            }
-
             gui_memory GUIMemory = {};
             GUIMemory.PermanentStorageSize = Megabytes(128);
             GUIMemory.TransientStorageSize = Gigabytes(1);
@@ -546,11 +525,15 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             Win32State.RenderMemoryTotalSize =
                 GUIMemory.PermanentStorageSize + GUIMemory.TransientStorageSize;
             Win32State.RenderMemoryBlock =
-                VirtualAlloc(NewBaseAddress, (size_t)Win32State.RenderMemoryTotalSize,
+                VirtualAlloc(BaseAddress, (size_t)Win32State.RenderMemoryTotalSize,
                              MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+
             GUIMemory.PermanentStorage = Win32State.RenderMemoryBlock;
             GUIMemory.TransientStorage =
                 ((u8 *)GUIMemory.PermanentStorage + GUIMemory.PermanentStorageSize);
+            GUIMemory.HighPriorityQueue = &Queue;
+            GUIMemory.PlatformAddEntry = PlatformAddEntry;
+            GUIMemory.PlatformCompleteAllWork = PlatformCompleteAllWork;
 
             if (GUIMemory.PermanentStorage && GUIMemory.TransientStorage) {
                 input Input[2] = {};
@@ -689,6 +672,8 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                                                Dimension.Width, Dimension.Height);
                     ReleaseDC(Window, DeviceContext);
                 }
+
+                CloseHandle(ComDev.ComHandle);
             } else {
                 // TODO: Logging
             }

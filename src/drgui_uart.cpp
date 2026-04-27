@@ -27,20 +27,19 @@ internal drone_data PacketDeserialize(uint8_t *Buffer) {
     return (Result);
 }
 
-internal void UpdateAndCommunicate(platform_com_dev ComDev, uart_memory *Memory) {
-#if 0
+internal void UpdateAndCommunicate(platform_com_dev ComDev, drone_data DataPacket) {
     drone_data Data = {};
     Data.LXInput = 20;
     Data.LYInput = 40;
 
     uint8_t Writebuffer[8] = {};
-    Win32Serialize(Writebuffer, Data);
+    PacketSerialize(Writebuffer, Data);
 
     drone_data Data2 = {};
 
     uint8_t ReadBuffer[8] = {};
-    DWORD EventMask;
     int Index = 0;
+    #if 0
     if (WaitCommEvent(ComDev.ComHandle, &EventMask, NULL)) {
         if (EventMask & EV_TXEMPTY) {
             if(!WriteFile(ComDev.ComHandle, Writebuffer, sizeof(Writebuffer),
@@ -59,6 +58,6 @@ internal void UpdateAndCommunicate(platform_com_dev ComDev, uart_memory *Memory)
             }
         }
     }
-    Data2 = Win32Deserialize(ReadBuffer);
-#endif
+    #endif
+    Data2 = PacketDeserialize(ReadBuffer);
 }

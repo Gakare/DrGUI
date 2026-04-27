@@ -96,6 +96,12 @@ typedef PLATFORM_WORK_QUEUE_CALLBACK(platform_work_queue_callback);
 typedef void platform_add_entry(platform_work_queue *Queue,
                            platform_work_queue_callback *Callback, void *Data);
 typedef void platform_complete_all_work(platform_work_queue *Queue);
+
+struct platform_com_dev {
+    void* ComHandle;
+    u32 *PortName;
+};
+
 typedef struct gui_memory {
     b32 IsInitialized;
 
@@ -104,26 +110,11 @@ typedef struct gui_memory {
 
     u64 TransientStorageSize;
     void *TransientStorage; // Required to be cleared to zero at startup
-} gui_memory;
 
-struct platform_com_dev {
-    void* ComHandle;
-};
-
-typedef struct uart_memory {
-    b32 IsInitialized;
-
-    u64 PermanentStorageSize;
-    void *PermanentStorage;
-
-    u64 TransientStorageSize;
-    void *TransientStorage;
-    
     platform_work_queue *HighPriorityQueue;
-
     platform_add_entry *PlatformAddEntry;
     platform_complete_all_work *PlatformCompleteAllWork;
-} uart_memory;
+} gui_memory;
 
 #define DRGUI_PLATFORM_H
 #endif

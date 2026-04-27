@@ -14,8 +14,7 @@ struct drone_data {
 };
 #pragma pack(pop)
 
-internal void UpdateAndCommunicate(platform_com_dev ComDev, uart_memory *Memory,
-                                   drone_data DataPacket);
+internal void UpdateAndCommunicate(platform_com_dev ComDev, drone_data DataPacket);
 
 #define DRGUI_UART_H 
 #endif
