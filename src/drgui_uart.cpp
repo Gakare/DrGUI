@@ -2,7 +2,8 @@
 #include "drgui_math.h"
 
 // NOTE: This will be a manual packing of bytes into the buffer
-internal void PacketSerialize(uint8_t *Buffer, drone_data Data) {
+internal u32 PacketSerialize(u8 *Buffer, drone_data Data) {
+    u32 Result = 0;
     if (Buffer) {
         Buffer[0] = (Data.LXInput >> 0) & 0xFF;
         Buffer[1] = (Data.LXInput >> 8) & 0xFF;
@@ -13,10 +14,13 @@ internal void PacketSerialize(uint8_t *Buffer, drone_data Data) {
         Buffer[5] = (Data.LYInput >> 8) & 0xFF;
         Buffer[6] = (Data.LYInput >> 16) & 0xFF;
         Buffer[7] = (Data.LYInput >> 24) & 0xFF;
+        
+        Result = 8;
     }
+    return (Result);
 }
 
-internal drone_data PacketDeserialize(uint8_t *Buffer) {
+internal drone_data PacketDeserialize(u8 *Buffer) {
     drone_data Result = {};
     if (Buffer) {
         Result.LXInput = (int)Buffer[0] | ((int)Buffer[1] << 8) | ((int)Buffer[2] << 16) |
@@ -25,39 +29,4 @@ internal drone_data PacketDeserialize(uint8_t *Buffer) {
                          ((int)Buffer[7] << 24);
     }
     return (Result);
-}
-
-internal void UpdateAndCommunicate(platform_com_dev ComDev, drone_data DataPacket) {
-    drone_data Data = {};
-    Data.LXInput = 20;
-    Data.LYInput = 40;
-
-    uint8_t Writebuffer[8] = {};
-    PacketSerialize(Writebuffer, Data);
-
-    drone_data Data2 = {};
-
-    uint8_t ReadBuffer[8] = {};
-    int Index = 0;
-    #if 0
-    if (WaitCommEvent(ComDev.ComHandle, &EventMask, NULL)) {
-        if (EventMask & EV_TXEMPTY) {
-            if(!WriteFile(ComDev.ComHandle, Writebuffer, sizeof(Writebuffer),
-                          &bytesWritten, NULL)) {
-                // NOTE: Failed to send
-            }
-        }
-
-        if (EventMask & EV_RXCHAR) {
-            uint8_t Buffer;
-            // NOTE: Reads 1 byte at a time
-            while ((Index < 8) && ReadFile(ComDev.ComHandle, (void *)&Buffer,
-                                           sizeof(Buffer), &bytesRead, NULL))
-            {
-                ReadBuffer[Index++] = Buffer;
-            }
-        }
-    }
-    #endif
-    Data2 = PacketDeserialize(ReadBuffer);
 }

@@ -1,6 +1,15 @@
 #if !defined(DRGUI_UART_H)
 #include "drgui_platform.h"
 
+enum uart_event_type {
+    UARTType_Rx,
+    UARTType_Tx,
+};
+
+struct uart_event {
+    uart_event_type Type;
+};
+
 #pragma pack(push, 1)
 // NOTE: Create a serialization and deserialization protocol
 // - Left stick XInput
@@ -14,7 +23,8 @@ struct drone_data {
 };
 #pragma pack(pop)
 
-internal void UpdateAndCommunicate(platform_com_dev ComDev, drone_data DataPacket);
+internal u32 PacketSerialize(u8 *Buffer, drone_data Data);
+internal drone_data PacketDeserialize(u8 *Buffer);
 
 #define DRGUI_UART_H 
 #endif

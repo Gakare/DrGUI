@@ -80,7 +80,7 @@ typedef struct read_com_result {
     u32 ContentSize;
     void *Contents;
 } read_com_result;
-#define PLATFORM_READ_COM(name) read_com_result name(void *ComHandle, void* Buffer, u32 PacketSize)
+#define PLATFORM_READ_COM(name) read_com_result name(void *ComHandle, u32 PacketSize)
 typedef PLATFORM_READ_COM(platform_read_com);
 
 #define PLATFORM_FREE_FILE_MEMORY(name) void name(void *Memory)
@@ -100,6 +100,7 @@ typedef void platform_complete_all_work(platform_work_queue *Queue);
 struct platform_com_dev {
     void* ComHandle;
     u32 *PortName;
+    b32 IsConnected;
 };
 
 typedef struct gui_memory {

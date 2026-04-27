@@ -28,10 +28,10 @@ global_variable x_input_set_state *XInputSetState_ = XInputSetStateStub;
 
 /* Global Variables */
 global_variable b32 GlobalRunning = true;
-global_variable b32 GlobalUARTRunning = true;
 global_variable win32_offscreen_buffer GlobalBackBuffer;
 global_variable WINDOWPLACEMENT GlobalWindowPosition = {sizeof(GlobalWindowPosition)};
 global_variable b32 GlobalIsFullScreen;
+global_variable platform_com_dev GlobalComDev;
 
 internal void ToggleFullScreen(HWND Window) {
     // NOTE: This is from Raymond Chen's blog
@@ -127,12 +127,10 @@ LRESULT CALLBACK Win32MainWindowCallBack(HWND Window, UINT Msg, WPARAM WParam, L
         } break;
 
         case WM_DESTROY: {
-            GlobalUARTRunning = false;
             GlobalRunning = false;
         } break;
 
         case WM_CLOSE: {
-            GlobalUARTRunning = false;
             GlobalRunning = false;
         } break;
 
@@ -275,6 +273,7 @@ internal platform_com_dev Win32InitComDevice(u32 *PortName) {
     platform_com_dev Result = {};
     Result.ComHandle = INVALID_HANDLE_VALUE;
     Result.PortName = PortName;
+    Result.IsConnected = 0;
     return (Result);
 }
 
@@ -295,9 +294,9 @@ internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
      *       WTmax = (N (amount in bytes) * WriteTotalTimoutM) + WriteTotalTimoutConst
      */
     COMMTIMEOUTS Win32Timeout = {};
+    Win32Timeout.ReadIntervalTimeout = MAXDWORD;
     Win32Timeout.ReadTotalTimeoutMultiplier = 0;
     Win32Timeout.ReadTotalTimeoutConstant = 0;
-    Win32Timeout.ReadIntervalTimeout = 0;
     Win32Timeout.WriteTotalTimeoutMultiplier = 0;
     Win32Timeout.WriteTotalTimeoutConstant = 0;
     SetCommTimeouts(Win32ComHandle, &Win32Timeout);
@@ -416,29 +415,6 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter) {
             WaitForSingleObjectEx(ThreadInfo->Queue->SemaphoreHandle, INFINITE, FALSE);
         }
     }
-
-    //return (0);
-}
-
-DWORD WINAPI ConnectUART(LPVOID lpParameter) {
-    platform_com_dev *ComDev = (platform_com_dev *)lpParameter;
-    
-#if DR_INTERNAL
-    char Buffer[256];
-    wsprintf(Buffer, "Thread %u: Connecting Com Device\n", GetCurrentThreadId());
-    OutputDebugStringA(Buffer);
-#endif
-
-    while (ComDev->ComHandle == INVALID_HANDLE_VALUE) {
-        // TODO: Add text to display waiting for com device.
-        ComDev->ComHandle = CreateFileW((LPCWSTR)ComDev->PortName, 
-                                        GENERIC_READ | GENERIC_WRITE, 0,
-                                        NULL, OPEN_EXISTING, 0, NULL);
-    }
-
-    Win32ConfigureComDevice(ComDev->ComHandle);
-
-    return (0);
 }
 
 internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
@@ -447,7 +423,33 @@ internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
     OutputDebugStringA(Buffer);
 }
 
-internal PLATFORM_WORK_QUEUE_CALLBACK(ConnectComDevice) {
+
+struct com_write_data {
+    void *ComHandle;
+    u8 *Buffer;
+    u32 PacketSize;
+};
+internal PLATFORM_WORK_QUEUE_CALLBACK(WriteComDevice) {
+    com_write_data *ComData = (com_write_data *)Data;
+
+    if (PlatformWriteCom(ComData->ComHandle, ComData->PacketSize, ComData->Buffer)) {
+    }
+}
+
+internal PLATFORM_WORK_QUEUE_CALLBACK(Win32UpdateUARTEvent) {
+    uart_event *UARTEvent = (uart_event *)Data;
+    DWORD EventMask = 0;
+    if (WaitCommEvent(GlobalComDev.ComHandle, &EventMask, 0)) {
+        if (EventMask & EV_TXEMPTY) {
+            UARTEvent->Type = UARTType_Tx;
+        }
+        if (EventMask & EV_RXCHAR) {
+            UARTEvent->Type = UARTType_Rx;
+        }
+    }
+}
+
+DWORD WINAPI UARTThreadProc(LPVOID LpParameter) {
 }
 
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
@@ -504,16 +506,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
             GlobalRunning = true;
 
 #if DR_INTERNAL
-    LPCWSTR PortName = L"\\\\.\\COM4";
-#else
-    LPCWSTR PortName = L"\\\\.\\COM6";
-#endif
-            platform_com_dev ComDev = Win32InitComDevice((u32 *)PortName);
-            DWORD ThreadID;
-            HANDLE ThreadHandle = CreateThread(0, 0, ConnectUART, &ComDev, 0, &ThreadID);
-            CloseHandle(ThreadHandle);
-
-#if DR_INTERNAL
             LPVOID BaseAddress = (LPVOID)Terabytes((u64)2);
 #else
             LPVOID BaseAddress = 0;
@@ -539,6 +531,24 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 input Input[2] = {};
                 input *NewInput = &Input[0];
                 input *OldInput = &Input[1];
+
+#if DR_INTERNAL
+                LPCWSTR PortName = L"\\\\.\\COM4";
+#else
+                LPCWSTR PortName = L"\\\\.\\COM6";
+#endif
+                GlobalComDev = Win32InitComDevice((u32 *)PortName);
+                while (GlobalComDev.ComHandle == INVALID_HANDLE_VALUE) {
+                    GlobalComDev.ComHandle = CreateFileW((LPCWSTR)GlobalComDev.PortName, 
+                                                         GENERIC_READ | GENERIC_WRITE, 0,
+                                                         0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
+                }
+
+                GlobalComDev.IsConnected = 1;
+                Win32ConfigureComDevice(GlobalComDev.ComHandle);
+
+                uart_event UARTEvent = {};
+                drone_data Data = {};
 
                 while (GlobalRunning) {
                     controller_input *OldKeyboardController = GetController(OldInput, 0);
@@ -657,6 +667,49 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                         }
                     }
 
+                    // NOTE: Reading
+                    if (GlobalComDev.IsConnected) {
+                        read_com_result ReadResult = 
+                            PlatformReadCom(GlobalComDev.ComHandle, sizeof(Data));
+                        if (ReadResult.ContentSize) {
+                            Data = PacketDeserialize((u8 *)ReadResult.Contents);
+#if DR_INTERNAL
+                            {
+                                char Buffer[256];
+                                wsprintf(Buffer, "\nLXInput: %d, LYInput: %d", 
+                                         Data.LXInput, Data.LYInput);
+                                OutputDebugString(Buffer);
+                            }
+#endif
+                        }
+
+#if 0
+                        Win32AddEntry(&Queue, Win32UpdateUARTEvent, &UARTEvent);
+                        Win32CompleteAllWork(&Queue);
+                        switch (UARTEvent.Type) {
+                            case UARTType_Rx: {
+                                b32 WaitingOnRead = 0;
+                                OVERLAPPED Overlapped = {};
+                                Overlapped.hEvent = CreateEvent(0, TRUE, 0, 0);
+
+                                }
+                            } break;
+                            case UARTType_Tx: {
+                                com_write_data *ComWriteData = {};
+                                ComWriteData->ComHandle = GlobalComDev.ComHandle;
+                                u8 Buffer[8];
+                                u32 PacketSize = PacketSerialize(Buffer, Data);
+                                ComWriteData->Buffer = Buffer;
+                                ComWriteData->PacketSize = PacketSize;
+                                // PlatformWriteCom
+                            } break;
+                            default: {
+                                Assert(!"Invalid Code Path");
+                            };
+                        }
+#endif
+                    }
+
                     offscreen_buffer Buffer = {};
                     Buffer.Memory = GlobalBackBuffer.Memory;
                     Buffer.Width = GlobalBackBuffer.Width;
@@ -673,7 +726,9 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                     ReleaseDC(Window, DeviceContext);
                 }
 
-                CloseHandle(ComDev.ComHandle);
+                if (GlobalComDev.IsConnected) {
+                    CloseHandle(GlobalComDev.ComHandle);
+                }
             } else {
                 // TODO: Logging
             }

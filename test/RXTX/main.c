@@ -53,6 +53,11 @@ void WriteStr(const char *Str) {
     }
 }
 
+typedef struct drone_data{
+	int LXInput;
+	int LYInput;
+} __attribute__((packed)) drone_data;
+
 drone_data Deserialize(uint8_t *Buffer) {
     drone_data Result = {};
     if (Buffer) {
@@ -105,20 +110,15 @@ void Transmit(drone_data Data) {
     UART_transmit((Data.LYInput >> 24) & 0xFF);
 }
 
-// NOTE: Already has -fpack-struct
-typedef struct drone_data{
-    int LXInput;
-    int LYInput;
-} drone_data;
+static drone_data Data;
+static uint8_t buffer[8];
 
 int main(void) {
     InitUSART(BAUD);
     sei();
 
-    drone_data Data = {};
     Data.LXInput = 200;
     Data.LYInput = 420;
-    uint8_t buffer[8] = {};
 
     while (1) {
         if (BytesAvailable() >= 8) {
@@ -130,6 +130,14 @@ int main(void) {
 
         if (ReadyToSend) {
             ReadyToSend = 0;
+			Data.LXInput++;
+			if (Data.LXInput == 1000) {
+				Data.LXInput = 200;
+			}
+			Data.LYInput++;
+			if (Data.LYInput == 1000) {
+				Data.LYInput = 420;
+			}
             Serialize(buffer, Data);
             Transmit(Data);
         }
