@@ -17,7 +17,6 @@
 #define Gigabytes(Val) (Megabytes(Val) * 1024)
 #define Terabytes(Val) (Gigabytes(Val) * 1024)
 
-
 typedef struct button_state {
     int HalfTransitionCount;
     b32 EndedDown;
@@ -60,7 +59,7 @@ typedef struct controller_input {
 
 typedef struct input {
     // TODO: Deciding if it should just be 1 controller
-    controller_input Controllers[5];
+    controller_input Controllers[3];
 } input;
 
 #define BITMAP_BYTES_PER_PIXEL 4
@@ -78,7 +77,7 @@ typedef struct platform_file_handle platform_file_handle;
 // TODO: See if this needs more work to be more robust if blocking becomes an issue
 typedef struct read_com_result {
     u32 ContentSize;
-    void *Contents;
+    u8 *Contents;
 } read_com_result;
 #define PLATFORM_READ_COM(name) read_com_result name(void *ComHandle, u32 PacketSize)
 typedef PLATFORM_READ_COM(platform_read_com);
@@ -86,7 +85,7 @@ typedef PLATFORM_READ_COM(platform_read_com);
 #define PLATFORM_FREE_FILE_MEMORY(name) void name(void *Memory)
 typedef PLATFORM_FREE_FILE_MEMORY(platform_free_file_memory);
 
-#define PLATFORM_WRITE_COM(name) b32 name(void *ComHandle, u32 PacketSize, void *Memory)
+#define PLATFORM_WRITE_COM(name) b32 name(void *ComHandle, u32 PacketSize, u8 *Memory)
 typedef PLATFORM_WRITE_COM(platform_write_com);
 
 struct platform_work_queue;

@@ -54,7 +54,6 @@ internal void UpdateAndRender(offscreen_buffer *Buffer, gui_memory *Memory, inpu
     ++ControllerIndex) {
         controller_input *Controller = GetController(Input, ControllerIndex);
         if (Controller->IsAnalog) {
-            // TODO: Figure out why my XOffset is off
             State->XOffset[0] += (int)(Controller->LStickAverageX);
             // TODO: Up and down is currently reversed, do I want to keep it that way?
             State->YOffset[0] -= (int)(Controller->LStickAverageY);

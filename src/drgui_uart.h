@@ -25,6 +25,7 @@ struct drone_data {
 
 internal u32 PacketSerialize(u8 *Buffer, drone_data Data);
 internal drone_data PacketDeserialize(u8 *Buffer);
+internal drone_data ProcessInputForSendPacket(input *Input);
 
 #define DRGUI_UART_H 
 #endif

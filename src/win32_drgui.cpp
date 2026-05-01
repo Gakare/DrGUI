@@ -31,7 +31,6 @@ global_variable b32 GlobalRunning = true;
 global_variable win32_offscreen_buffer GlobalBackBuffer;
 global_variable WINDOWPLACEMENT GlobalWindowPosition = {sizeof(GlobalWindowPosition)};
 global_variable b32 GlobalIsFullScreen;
-global_variable platform_com_dev GlobalComDev;
 
 internal void ToggleFullScreen(HWND Window) {
     // NOTE: This is from Raymond Chen's blog
@@ -294,7 +293,7 @@ internal void Win32ConfigureComDevice(HANDLE Win32ComHandle) {
      *       WTmax = (N (amount in bytes) * WriteTotalTimoutM) + WriteTotalTimoutConst
      */
     COMMTIMEOUTS Win32Timeout = {};
-    Win32Timeout.ReadIntervalTimeout = MAXDWORD;
+    Win32Timeout.ReadIntervalTimeout = 0;
     Win32Timeout.ReadTotalTimeoutMultiplier = 0;
     Win32Timeout.ReadTotalTimeoutConstant = 0;
     Win32Timeout.WriteTotalTimeoutMultiplier = 0;
@@ -314,7 +313,7 @@ PLATFORM_FREE_FILE_MEMORY(PlatformFreeFileMemory) {
 PLATFORM_READ_COM(PlatformReadCom) {
     read_com_result Result = {};
     Result.Contents =
-        VirtualAlloc(0, PacketSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        (u8 *)VirtualAlloc(0, PacketSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (Result.Contents) {
         DWORD BytesRead = 0;
         // TODO: Handle blocking with I/O Completion Port
@@ -333,9 +332,15 @@ PLATFORM_WRITE_COM(PlatformWriteCom) {
     b32 Result = false;
 
     DWORD BytesWritten = 0;
-    if (WriteFile(ComHandle, Memory, PacketSize, &BytesWritten, 0)) {
+    // NOTE: Subtract the packetsize by 1 because WriteFile apparently sends 1 more byte afterwards
+    if (WriteFile(ComHandle, Memory, PacketSize-1, &BytesWritten, 0)) {
         Result = (BytesWritten == PacketSize);
     } else {
+#if DR_INTERNAL
+        char Buffer[256];
+        sprintf_s(Buffer, "Failed to write: %d", GetLastError());
+        OutputDebugString(Buffer);
+#endif
     }
 
     return (Result);
@@ -419,7 +424,7 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter) {
 
 internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
     char Buffer[256];
-    wsprintf(Buffer, "Thread %u: %s\n", GetCurrentThreadId(), (char *)Data);
+    sprintf_s(Buffer, "Thread %u: %s\n", GetCurrentThreadId(), (char *)Data);
     OutputDebugStringA(Buffer);
 }
 
@@ -429,34 +434,82 @@ struct com_write_data {
     u8 *Buffer;
     u32 PacketSize;
 };
-internal PLATFORM_WORK_QUEUE_CALLBACK(WriteComDevice) {
-    com_write_data *ComData = (com_write_data *)Data;
 
-    if (PlatformWriteCom(ComData->ComHandle, ComData->PacketSize, ComData->Buffer)) {
-    }
-}
+struct uart_thread_info {
 
-internal PLATFORM_WORK_QUEUE_CALLBACK(Win32UpdateUARTEvent) {
-    uart_event *UARTEvent = (uart_event *)Data;
-    DWORD EventMask = 0;
-    if (WaitCommEvent(GlobalComDev.ComHandle, &EventMask, 0)) {
-        if (EventMask & EV_TXEMPTY) {
-            UARTEvent->Type = UARTType_Tx;
-        }
-        if (EventMask & EV_RXCHAR) {
-            UARTEvent->Type = UARTType_Rx;
-        }
-    }
-}
-
+};
 DWORD WINAPI UARTThreadProc(LPVOID LpParameter) {
+    uart_thread_info *Info = (uart_thread_info *)LpParameter;
+
+#if DR_INTERNAL
+    LPCWSTR PortName = L"\\\\.\\COM4";
+#else
+    LPCWSTR PortName = L"\\\\.\\COM6";
+#endif
+    platform_com_dev ComDev = Win32InitComDevice((u32 *)PortName);
+    while (ComDev.ComHandle == INVALID_HANDLE_VALUE) {
+        ComDev.ComHandle = CreateFileW((LPCWSTR)ComDev.PortName, 
+                                       GENERIC_READ | GENERIC_WRITE, 0,
+                                       0, OPEN_EXISTING, 0, 0);
+    }
+    ComDev.IsConnected = 1;
+    Win32ConfigureComDevice(ComDev.ComHandle);
+    for (;;) {
+#if 0
+        // TODO: Work on timing configuration
+        // NOTE: Writing
+        if (ComDev.IsConnected) {
+            drone_data Data = ProcessInputForSendPacket(NewInput);
+#if DR_INTERNAL
+            {
+                char Buffer[256];
+                sprintf_s(Buffer, "\nLXInput: %d, LYInput: %d", 
+                          Data.LXInput, Data.LYInput);
+                OutputDebugString(Buffer);
+            }
+#endif
+#if 0
+            u8 Buffer[8] = {};
+            u32 PacketSize = PacketSerialize(Buffer, Data);
+            if (PacketSize) {
+                PlatformWriteCom(ComDev.ComHandle, PacketSize, Buffer);
+            }
+#endif
+        }
+
+        // NOTE: Reading
+#if 0
+        if (ComDev.IsConnected) {
+            read_com_result ReadResult = 
+                PlatformReadCom(ComDev.ComHandle, sizeof(Data));
+            if (ReadResult.ContentSize) {
+                Data = PacketDeserialize(ReadResult.Contents);
+#if DR_INTERNAL
+                {
+                    char Buffer[256];
+                    sprintf_s(Buffer, "\nLXInput: %d, LYInput: %d", 
+                              Data.LXInput, Data.LYInput);
+                    OutputDebugString(Buffer);
+                }
+#endif
+            }
+        }
+#endif
+#endif
+    }
+
+#if 0
+    if (ComDev.IsConnected) {
+        CloseHandle(ComDev.ComHandle);
+    }
+#endif
 }
 
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                      int ShowCmd) {
     win32_state Win32State = {};
 
-    // IMPORTANT: Determine how many threads Evan's machine and adjust if necessary.
+    // IMPORTANT: Determine how many threads Evan's machine has and adjust if necessary.
     win32_thread_info ThreadInfo[4] = {};
 
     platform_work_queue Queue = {};
@@ -466,7 +519,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
     Queue.SemaphoreHandle = CreateSemaphoreExA(0, InitialCount, ThreadCount, 0, 0,
                                                 SEMAPHORE_ALL_ACCESS);
     
-    // This spawns worker threads
     for (u32 ThreadIndex = 0; ThreadIndex < ThreadCount; ++ThreadIndex) {
         win32_thread_info *Info = ThreadInfo + ThreadIndex;
         Info->Queue = &Queue;
@@ -532,23 +584,11 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 input *NewInput = &Input[0];
                 input *OldInput = &Input[1];
 
-#if DR_INTERNAL
-                LPCWSTR PortName = L"\\\\.\\COM4";
-#else
-                LPCWSTR PortName = L"\\\\.\\COM6";
-#endif
-                GlobalComDev = Win32InitComDevice((u32 *)PortName);
-                while (GlobalComDev.ComHandle == INVALID_HANDLE_VALUE) {
-                    GlobalComDev.ComHandle = CreateFileW((LPCWSTR)GlobalComDev.PortName, 
-                                                         GENERIC_READ | GENERIC_WRITE, 0,
-                                                         0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
-                }
-
-                GlobalComDev.IsConnected = 1;
-                Win32ConfigureComDevice(GlobalComDev.ComHandle);
-
-                uart_event UARTEvent = {};
-                drone_data Data = {};
+                DWORD UARTThreadID;
+                uart_thread_info *UARTInfo = {};
+                HANDLE UARTThreadHandle = CreateThread(0, 0, UARTThreadProc, UARTInfo,
+                                                       0, &UARTThreadID);
+                CloseHandle(UARTThreadHandle);
 
                 while (GlobalRunning) {
                     controller_input *OldKeyboardController = GetController(OldInput, 0);
@@ -667,49 +707,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                         }
                     }
 
-                    // NOTE: Reading
-                    if (GlobalComDev.IsConnected) {
-                        read_com_result ReadResult = 
-                            PlatformReadCom(GlobalComDev.ComHandle, sizeof(Data));
-                        if (ReadResult.ContentSize) {
-                            Data = PacketDeserialize((u8 *)ReadResult.Contents);
-#if DR_INTERNAL
-                            {
-                                char Buffer[256];
-                                wsprintf(Buffer, "\nLXInput: %d, LYInput: %d", 
-                                         Data.LXInput, Data.LYInput);
-                                OutputDebugString(Buffer);
-                            }
-#endif
-                        }
-
-#if 0
-                        Win32AddEntry(&Queue, Win32UpdateUARTEvent, &UARTEvent);
-                        Win32CompleteAllWork(&Queue);
-                        switch (UARTEvent.Type) {
-                            case UARTType_Rx: {
-                                b32 WaitingOnRead = 0;
-                                OVERLAPPED Overlapped = {};
-                                Overlapped.hEvent = CreateEvent(0, TRUE, 0, 0);
-
-                                }
-                            } break;
-                            case UARTType_Tx: {
-                                com_write_data *ComWriteData = {};
-                                ComWriteData->ComHandle = GlobalComDev.ComHandle;
-                                u8 Buffer[8];
-                                u32 PacketSize = PacketSerialize(Buffer, Data);
-                                ComWriteData->Buffer = Buffer;
-                                ComWriteData->PacketSize = PacketSize;
-                                // PlatformWriteCom
-                            } break;
-                            default: {
-                                Assert(!"Invalid Code Path");
-                            };
-                        }
-#endif
-                    }
-
                     offscreen_buffer Buffer = {};
                     Buffer.Memory = GlobalBackBuffer.Memory;
                     Buffer.Width = GlobalBackBuffer.Width;
@@ -726,9 +723,6 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                     ReleaseDC(Window, DeviceContext);
                 }
 
-                if (GlobalComDev.IsConnected) {
-                    CloseHandle(GlobalComDev.ComHandle);
-                }
             } else {
                 // TODO: Logging
             }

@@ -15,6 +15,7 @@ internal u32 PacketSerialize(u8 *Buffer, drone_data Data) {
         Buffer[6] = (Data.LYInput >> 16) & 0xFF;
         Buffer[7] = (Data.LYInput >> 24) & 0xFF;
         
+        // NOTE: This will be manually adjusted
         Result = 8;
     }
     return (Result);
@@ -27,6 +28,20 @@ internal drone_data PacketDeserialize(u8 *Buffer) {
                          ((int)Buffer[3] << 24);
         Result.LYInput = (int)Buffer[4] | ((int)Buffer[5] << 8) | ((int)Buffer[6] << 16) |
                          ((int)Buffer[7] << 24);
+    }
+    return (Result);
+}
+
+internal drone_data ProcessInputForSendPacket(input *Input) {
+    drone_data Result = {};
+    for (int ControllerIndex = 0;
+    ControllerIndex < ArrayCount(Input->Controllers);
+    ++ControllerIndex) {
+        controller_input *Controller = GetController(Input, ControllerIndex);
+        if (Controller->IsAnalog) {
+            Result.LXInput = RoundReal32ToInt32(Controller->LStickAverageX * 100.0f);
+            Result.LYInput = RoundReal32ToInt32(Controller->LStickAverageY * 100.0f);
+        }
     }
     return (Result);
 }
