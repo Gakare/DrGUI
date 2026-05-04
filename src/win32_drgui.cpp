@@ -31,6 +31,10 @@ global_variable b32 GlobalRunning = true;
 global_variable win32_offscreen_buffer GlobalBackBuffer;
 global_variable WINDOWPLACEMENT GlobalWindowPosition = {sizeof(GlobalWindowPosition)};
 global_variable b32 GlobalIsFullScreen;
+global_variable i64 GlobalPerfCountFrequency;
+global_variable b32 GlobalSleepIsGranular;
+global_variable b32 GlobalUARTRunning = false;
+
 
 internal void ToggleFullScreen(HWND Window) {
     // NOTE: This is from Raymond Chen's blog
@@ -126,10 +130,12 @@ LRESULT CALLBACK Win32MainWindowCallBack(HWND Window, UINT Msg, WPARAM WParam, L
         } break;
 
         case WM_DESTROY: {
+            GlobalUARTRunning = false;
             GlobalRunning = false;
         } break;
 
         case WM_CLOSE: {
+            GlobalUARTRunning = false;
             GlobalRunning = false;
         } break;
 
@@ -428,15 +434,19 @@ internal PLATFORM_WORK_QUEUE_CALLBACK(DoWorkerWork) {
     OutputDebugStringA(Buffer);
 }
 
+inline LARGE_INTEGER Win32GetWallClock(void) {
+    LARGE_INTEGER Result;
+    QueryPerformanceCounter(&Result);
+    return (Result);
+}
 
-struct com_write_data {
-    void *ComHandle;
-    u8 *Buffer;
-    u32 PacketSize;
-};
+inline r32 Win32GetSecondsElapsed(LARGE_INTEGER Start, LARGE_INTEGER End) {
+    r32 Result  = ((r32)(End.QuadPart - Start.QuadPart) / (r32)GlobalPerfCountFrequency);
+    return (Result);
+}
 
 struct uart_thread_info {
-
+    input *Input;
 };
 DWORD WINAPI UARTThreadProc(LPVOID LpParameter) {
     uart_thread_info *Info = (uart_thread_info *)LpParameter;
@@ -452,14 +462,47 @@ DWORD WINAPI UARTThreadProc(LPVOID LpParameter) {
                                        GENERIC_READ | GENERIC_WRITE, 0,
                                        0, OPEN_EXISTING, 0, 0);
     }
+
     ComDev.IsConnected = 1;
     Win32ConfigureComDevice(ComDev.ComHandle);
-    for (;;) {
-#if 0
-        // TODO: Work on timing configuration
+
+    int UARTRefreshHz = 100;
+    r32 TargetSecondsPerUARTHz = 1.0f / (r32)UARTRefreshHz;
+
+    LARGE_INTEGER LastCounter = Win32GetWallClock();
+
+    //NOTE: Waits until protocol gets started from client
+    u8 StartByte = 0;
+    do {
+        read_com_result InitialResponse;
+        InitialResponse = PlatformReadCom(ComDev.ComHandle, sizeof(StartByte));
+        if (InitialResponse.ContentSize) {
+            StartByte = *InitialResponse.Contents;
+        }
+    } while (StartByte != 0x67);
+    
+    while (GlobalUARTRunning) {
         // NOTE: Writing
-        if (ComDev.IsConnected) {
-            drone_data Data = ProcessInputForSendPacket(NewInput);
+        drone_data Data = ProcessInputForSendPacket(Info->Input);
+#if DR_INTERNAL
+        {
+            char Buffer[256];
+            sprintf_s(Buffer, "\nLXInput: %d, LYInput: %d", 
+                      Data.LXInput, Data.LYInput);
+            OutputDebugString(Buffer);
+        }
+#endif
+        u8 PacketBuffer[8] = {};
+        u32 PacketSize = PacketSerialize(PacketBuffer, Data);
+        if (PacketSize) {
+            PlatformWriteCom(ComDev.ComHandle, PacketSize, PacketBuffer);
+        }
+
+        // NOTE: Reading
+        read_com_result ReadResult = 
+            PlatformReadCom(ComDev.ComHandle, sizeof(Data));
+        if (ReadResult.ContentSize) {
+            Data = PacketDeserialize(ReadResult.Contents);
 #if DR_INTERNAL
             {
                 char Buffer[256];
@@ -468,41 +511,48 @@ DWORD WINAPI UARTThreadProc(LPVOID LpParameter) {
                 OutputDebugString(Buffer);
             }
 #endif
-#if 0
-            u8 Buffer[8] = {};
-            u32 PacketSize = PacketSerialize(Buffer, Data);
-            if (PacketSize) {
-                PlatformWriteCom(ComDev.ComHandle, PacketSize, Buffer);
-            }
-#endif
         }
 
-        // NOTE: Reading
-#if 0
-        if (ComDev.IsConnected) {
-            read_com_result ReadResult = 
-                PlatformReadCom(ComDev.ComHandle, sizeof(Data));
-            if (ReadResult.ContentSize) {
-                Data = PacketDeserialize(ReadResult.Contents);
-#if DR_INTERNAL
-                {
-                    char Buffer[256];
-                    sprintf_s(Buffer, "\nLXInput: %d, LYInput: %d", 
-                              Data.LXInput, Data.LYInput);
-                    OutputDebugString(Buffer);
+        LARGE_INTEGER WorkCounter = Win32GetWallClock();
+        r32 WorkSecondsElapsed = Win32GetSecondsElapsed(LastCounter, WorkCounter);
+
+        r32 SecondsElapsedForFrame = WorkSecondsElapsed;
+        if (SecondsElapsedForFrame < TargetSecondsPerUARTHz) {
+            if (GlobalSleepIsGranular) {
+                DWORD SleepMS = (DWORD)(1000.0f * (TargetSecondsPerUARTHz -
+                                        SecondsElapsedForFrame));
+                if (SleepMS > 0) {
+                    Sleep(SleepMS);
                 }
-#endif
             }
+            while (SecondsElapsedForFrame < TargetSecondsPerUARTHz) {
+                SecondsElapsedForFrame = Win32GetSecondsElapsed(LastCounter, Win32GetWallClock());
+            }
+        } else {
+            // TODO: MISSED TIMING
+        }
+
+        LARGE_INTEGER EndCounter = Win32GetWallClock();
+        r32 MSPerFrame = 1000.0f * Win32GetSecondsElapsed(LastCounter, EndCounter);
+        LastCounter = EndCounter;
+
+#if 1
+        r32 FPS = 0.0f;
+        {
+            char TextBuffer[256];
+            sprintf_s(TextBuffer, "UART THREAD: %.02fms/f,  %.02ff/s\n", MSPerFrame,
+                      FPS);
+            OutputDebugString(TextBuffer);
         }
 #endif
-#endif
+
     }
 
-#if 0
     if (ComDev.IsConnected) {
         CloseHandle(ComDev.ComHandle);
     }
-#endif
+
+    return (0);
 }
 
 int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
@@ -517,8 +567,8 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
     u32 InitialCount = 0;
     u32 ThreadCount = ArrayCount(ThreadInfo);
     Queue.SemaphoreHandle = CreateSemaphoreExA(0, InitialCount, ThreadCount, 0, 0,
-                                                SEMAPHORE_ALL_ACCESS);
-    
+                                               SEMAPHORE_ALL_ACCESS);
+
     for (u32 ThreadIndex = 0; ThreadIndex < ThreadCount; ++ThreadIndex) {
         win32_thread_info *Info = ThreadInfo + ThreadIndex;
         Info->Queue = &Queue;
@@ -542,6 +592,18 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
     // TODO: Determine which one is the better default
     Win32ResizeDIBSection(&GlobalBackBuffer, 960, 540);
     //Win32ResizeDIBSection(&GlobalBackBuffer, 1920, 1080);
+
+    LARGE_INTEGER PerfCountFrequencyResult;
+    QueryPerformanceFrequency(&PerfCountFrequencyResult);
+    GlobalPerfCountFrequency = PerfCountFrequencyResult.QuadPart;
+
+    // NOTE: Set the Windows scheduler granularity to 1ms so that Sleep() can be more granular.
+    UINT DesiredSchedulerMS = 1;
+    GlobalSleepIsGranular = (timeBeginPeriod(DesiredSchedulerMS) == TIMERR_NOERROR);
+
+    int MonitorRefreshHz = 60;
+    int GameUpdateHz = MonitorRefreshHz / 2;
+    r32 TargetSecondsPerFrame = 1.0f / MonitorRefreshHz;
 
     if (RegisterClassA(&WindowClass)) {
         HWND Window = CreateWindowExA(0, WindowClass.lpszClassName, "DrGUI",
@@ -585,11 +647,15 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
                 input *OldInput = &Input[1];
 
                 DWORD UARTThreadID;
-                uart_thread_info *UARTInfo = {};
+                uart_thread_info UARTInfo[1] = {};
+                UARTInfo->Input = NewInput;
                 HANDLE UARTThreadHandle = CreateThread(0, 0, UARTThreadProc, UARTInfo,
                                                        0, &UARTThreadID);
                 CloseHandle(UARTThreadHandle);
 
+                LARGE_INTEGER LastCounter = Win32GetWallClock();
+
+                i64 LastCycleCount = __rdtsc();
                 while (GlobalRunning) {
                     controller_input *OldKeyboardController = GetController(OldInput, 0);
                     controller_input *NewKeyboardController = GetController(NewInput, 0);
@@ -716,13 +782,55 @@ int CALLBACK WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CmdLine,
 
                     UpdateAndRender(&Buffer, &GUIMemory, NewInput);
 
+                    LARGE_INTEGER WorkCounter = Win32GetWallClock();
+                    r32 WorkSecondsElapsed  = Win32GetSecondsElapsed(LastCounter, WorkCounter);
+
+                    r32 SecondsElapsedForFrame = WorkSecondsElapsed;
+                    if (SecondsElapsedForFrame < TargetSecondsPerFrame) {
+                        if (GlobalSleepIsGranular) {
+                            DWORD SleepMS = (DWORD)(1000.0f * (TargetSecondsPerFrame -
+                                                    SecondsElapsedForFrame));
+                            if (SleepMS > 0) {
+                                Sleep(SleepMS);
+                            }
+                        }
+                        while (SecondsElapsedForFrame < TargetSecondsPerFrame) {
+                            SecondsElapsedForFrame = Win32GetSecondsElapsed(LastCounter,
+                                                                            Win32GetWallClock());
+                        }
+                    } else {
+                        // TODO: MISSED FRAME RATE!
+                    }
+
                     win32_window_dimension Dimension = Win32GetWindowDimension(Window);
                     HDC DeviceContext = GetDC(Window);
                     Win32DisplayBufferInWindow(DeviceContext, &GlobalBackBuffer,
                                                Dimension.Width, Dimension.Height);
-                    ReleaseDC(Window, DeviceContext);
-                }
 
+                    input *TempInput = NewInput;
+                    NewInput = OldInput;
+                    OldInput = TempInput;
+
+                    LARGE_INTEGER EndCounter = Win32GetWallClock();
+#if 1
+                    r32 MSPerFrame = 1000.0f * Win32GetSecondsElapsed(LastCounter, EndCounter);
+#endif
+                    LastCounter = EndCounter;
+
+                    i64 EndCycleCount = __rdtsc();
+                    i64 CyclesElapsed = EndCycleCount - LastCycleCount;
+                    LastCycleCount = EndCycleCount;
+
+#if 1
+                    r64 MCPF = ((r64)CyclesElapsed / (1000 * 1000));
+                    {
+                        char TextBuffer[256];
+                        sprintf_s(TextBuffer, "GUI THREAD: %.02fms/f\n",
+                                  MSPerFrame);
+                        OutputDebugString(TextBuffer);
+                    }
+#endif
+                }
             } else {
                 // TODO: Logging
             }
